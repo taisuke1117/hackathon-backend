@@ -6,6 +6,7 @@ import (
 	"main/model"
 
 	"errors"
+	"github.com/oklog/ulid/v2"
 	"math/rand"
 	"time"
 )
