@@ -23,10 +23,17 @@ func init() {
 	mysqlHost := os.Getenv("MYSQL_HOST")
 	mysqlDatabase := os.Getenv("MYSQL_DATABASE")
 
-	connStr := fmt.Sprintf("%s:%s@%s/%s", mysqlUser, mysqlPwd, mysqlHost, mysqlDatabase)
+	var connStr string
+	// MYSQL_HOSTが「unix(」から始まっている場合はソケット通信、そうでない場合は通常のTCPとして処理
+	if len(mysqlHost) > 5 && mysqlHost[:5] == "unix(" {
+		// ソケット通信用: user:password@unix(/cloudsql/connection-name)/dbname
+		connStr = fmt.Sprintf("%s:%s@%s/%s", mysqlUser, mysqlPwd, mysqlHost, mysqlDatabase)
+	} else {
+		// ローカル開発などのTCP用: user:password@tcp(host:port)/dbname
+		connStr = fmt.Sprintf("%s:%s@tcp(%s)/%s", mysqlUser, mysqlPwd, mysqlHost, mysqlDatabase)
+	}
 
 	var err error
-
 	db, err = sql.Open("mysql", connStr)
 	if err != nil {
 		log.Fatalf("fail: sql.Open, %v\n", err)
