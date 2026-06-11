@@ -63,8 +63,16 @@ func main() {
 
 	closeDBWithSysCall()
 
-	log.Println("Listening on :8080...")
-	if err := http.ListenAndServe(":8080", nil); err != nil {
+	// 1. 環境変数 PORT からポート番号を取得（無ければデフォルトで 8080）
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+
+	log.Printf("Listening on :%s...\n", port)
+
+	// 2. 文字列をガッチャンコして、取得したポートで起動
+	if err := http.ListenAndServe(":"+port, nil); err != nil {
 		log.Fatal(err)
 	}
 }
