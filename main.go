@@ -36,11 +36,13 @@ func init() {
 	var err error
 	db, err = sql.Open("mysql", connStr)
 	if err != nil {
-		log.Fatalf("fail: sql.Open, %v\n", err)
+		// 🔴 log.Fatalf を log.Println に変更（死なせない）
+		log.Println("⚠️ WARNING: sql.Open failed:", err)
 	}
 
 	if err := db.Ping(); err != nil {
-		log.Fatalf("fail: _db.Ping, %v\n", err)
+		// 🔴 log.Fatalf を log.Println に変更（死なせない）
+		log.Println("⚠️ WARNING: db.Ping failed:", err)
 	}
 	_ = db
 }
