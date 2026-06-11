@@ -1,4 +1,4 @@
-FROM golang:1.21 AS build
+FROM golang:1.26 AS build
 WORKDIR /app
 
 # ---- 🔴 ここから書き換え 🔴 ----
