@@ -114,6 +114,7 @@ func main() {
 	mux.HandleFunc("POST /api/products/{id}/reviews", productCtrl.CreateReview)
 
 	// マイページ系
+	mux.HandleFunc("GET /api/me/badges", userCtrl.Badges)
 	mux.HandleFunc("GET /api/me/products", productCtrl.MyProducts)
 	mux.HandleFunc("GET /api/me/purchases", productCtrl.MyPurchases)
 	mux.HandleFunc("GET /api/me/likes", productCtrl.MyLikes)

@@ -130,6 +130,19 @@ func (c *UserController) Block(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "blocked"})
 }
 
+// Badges GET /api/me/badges — 未読の通知数・チャット数（ヘッダー/フッターのバッジ用）
+func (c *UserController) Badges(w http.ResponseWriter, r *http.Request) {
+	notifications, chats, err := c.userDao.GetBadges(middleware.UserId(r))
+	if err != nil {
+		handleDaoError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]int{
+		"unread_notifications": notifications,
+		"unread_chats":         chats,
+	})
+}
+
 // Init GET /api/init — アプリ起動時の一括取得
 func (c *UserController) Init(w http.ResponseWriter, r *http.Request) {
 	uid := middleware.UserId(r)

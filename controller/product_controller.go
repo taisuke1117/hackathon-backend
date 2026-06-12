@@ -146,10 +146,11 @@ func (c *ProductController) Ship(w http.ResponseWriter, r *http.Request) {
 		handleDaoError(w, err)
 		return
 	}
+	// 受取評価ボタンのある購入履歴ページへ誘導する
 	_ = c.notificationDao.Create(buyerId, "transaction",
 		"発送完了のお知らせ",
-		fmt.Sprintf("「%s」の発送手続きが完了しました。商品の到着をお待ちください。", productName),
-		fmt.Sprintf("/product/%d", id))
+		fmt.Sprintf("「%s」の発送手続きが完了しました。商品が届いたら受取評価をお願いします。", productName),
+		"/mypage/purchases")
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "shipped"})
 }

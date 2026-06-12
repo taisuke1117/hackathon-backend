@@ -89,6 +89,21 @@ func (d *UserDao) GetLikedProductIds(userId string) ([]int64, error) {
 	return ids, nil
 }
 
+// GetBadges 未読の通知数・チャット数を返す（ヘッダー/フッターのバッジ用）
+func (d *UserDao) GetBadges(userId string) (int, int, error) {
+	var notifications, chats int
+	err := d.DB.QueryRow(`
+		SELECT
+		  (SELECT COUNT(*) FROM notifications WHERE user_id = ? AND is_read = 0),
+		  (SELECT COUNT(*) FROM chats c
+		   JOIN chatrooms r ON r.chatroom_id = c.chatroom_id
+		   JOIN products p ON p.product_id = r.product_id
+		   WHERE c.is_read = 0 AND c.sender_id <> ?
+		     AND (r.proposer_id = ? OR p.seller_id = ?))`,
+		userId, userId, userId, userId).Scan(&notifications, &chats)
+	return notifications, chats, err
+}
+
 // Block ユーザーをブロックする
 func (d *UserDao) Block(blockerId, blockedId string) error {
 	_, err := d.DB.Exec(
