@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/tls"
+	"crypto/x509"
 	"database/sql"
 	"fmt"
 	"log"
@@ -12,37 +14,56 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/go-sql-driver/mysql"
 	_ "github.com/go-sql-driver/mysql"
 )
 
 var db *sql.DB
 
 func init() {
-	mysqlUser := os.Getenv("MYSQL_USER")
-	mysqlPwd := os.Getenv("MYSQL_PWD")
-	mysqlHost := os.Getenv("MYSQL_HOST")
-	mysqlDatabase := os.Getenv("MYSQL_DATABASE")
-
-	var connStr string
-	// MYSQL_HOSTが「unix(」から始まっている場合はソケット通信、そうでない場合は通常のTCPとして処理
-	if len(mysqlHost) > 5 && mysqlHost[:5] == "unix(" {
-		// ソケット通信用: user:password@unix(/cloudsql/connection-name)/dbname
-		connStr = fmt.Sprintf("%s:%s@%s/%s", mysqlUser, mysqlPwd, mysqlHost, mysqlDatabase)
+	// 1. 🔑 【SSL証明書の登録】（これはローカル接続に必須です）
+	rootCertPool := x509.NewCertPool()
+	pem, err := os.ReadFile("server-ca.pem")
+	if err != nil {
+		log.Println("💡 server-ca.pem なし（Cloud Run環境の可能性あり。処理を続行します）")
 	} else {
-		// ローカル開発などのTCP用: user:password@tcp(host:port)/dbname
-		connStr = fmt.Sprintf("%s:%s@tcp(%s)/%s", mysqlUser, mysqlPwd, mysqlHost, mysqlDatabase)
+		rootCertPool.AppendCertsFromPEM(pem)
+
+		clientCert := make([]tls.Certificate, 0, 1)
+		certs, err := tls.LoadX509KeyPair("client-cert.pem", "client-key.pem")
+		if err != nil {
+			log.Fatal("❌ client-cert.pem または client-key.pem の読み込みに失敗:", err)
+		}
+		clientCert = append(clientCert, certs)
+
+		// 「custom-tls」という名前で登録
+		_ = mysql.RegisterTLSConfig("custom-tls", &tls.Config{
+			RootCAs:            rootCertPool,
+			Certificates:       clientCert,
+			InsecureSkipVerify: true,
+		})
 	}
 
-	var err error
+	// 2. 🌍 【環境変数の読み込み】（元の綺麗な形に戻します！）
+	mysqlUser := os.Getenv("MYSQL_USER")
+	mysqlPwd := os.Getenv("MYSQL_PWD")
+	mysqlHost := os.Getenv("MYSQL_HOST") // 例: 35.226.67.117
+	mysqlDatabase := os.Getenv("MYSQL_DATABASE")
+
+	// 3. 🔗 接続文字列の組み立て
+	// 末尾に `?tls=custom-tls` をつけてSSLを強制します
+	connStr := fmt.Sprintf("%s:%s@tcp(%s:3306)/%s?tls=custom-tls", mysqlUser, mysqlPwd, mysqlHost, mysqlDatabase)
+
+	// 4. DB接続開始
 	db, err = sql.Open("mysql", connStr)
 	if err != nil {
-		// 🔴 log.Fatalf を log.Println に変更（死なせない）
 		log.Println("⚠️ WARNING: sql.Open failed:", err)
 	}
 
 	if err := db.Ping(); err != nil {
-		// 🔴 log.Fatalf を log.Println に変更（死なせない）
 		log.Println("⚠️ WARNING: db.Ping failed:", err)
+	} else {
+		log.Println("✅ SUCCESS: Database connected via SSL using Environment Variables!!!")
 	}
 	_ = db
 }
