@@ -8,7 +8,7 @@ import (
 	"log"
 	"main/controller"
 	"main/dao"
-	"main/usecase"
+	"main/middleware"
 	"net/http"
 	"os"
 	"os/signal"
@@ -16,31 +16,28 @@ import (
 	"syscall"
 
 	"github.com/go-sql-driver/mysql"
-	_ "github.com/go-sql-driver/mysql"
 )
 
 var db *sql.DB
 
 func init() {
-	// 1. 環境変数の取得
 	mysqlUser := os.Getenv("MYSQL_USER")
 	mysqlPwd := os.Getenv("MYSQL_PWD")
 	mysqlHost := os.Getenv("MYSQL_HOST")
 	mysqlDatabase := os.Getenv("MYSQL_DATABASE")
 
+	// parseTime=true: TIMESTAMP列をtime.Timeで受け取るために必須
+	// DBサーバーはUTCで保存しているので、locは指定せずUTCとして読み取る（表示変換はフロント側）
+	const dsnParams = "parseTime=true&charset=utf8mb4"
+
 	var connStr string
 
-	// 2. 🌍 本番（Unixソケット）かローカル（TCP）かを100%正確に判別する
+	// 本番（Unixソケット）かローカル（TCP）かをMYSQL_HOSTの形式で判別する
 	if strings.HasPrefix(mysqlHost, "unix(") {
-		// ☁️ 【本番（Cloud Run）環境】
-		// unix(/cloudsql/term9-taisuke-ohmori:us-central1:uttc) からパスだけを抜き出す
 		socketPath := strings.TrimSuffix(strings.TrimPrefix(mysqlHost, "unix("), ")")
-
-		// 本番環境はGCPの内部ネットワークなので、SSL証明書(pem)の読み込みは一切不要です！
-		connStr = fmt.Sprintf("%s:%s@unix(%s)/%s", mysqlUser, mysqlPwd, socketPath, mysqlDatabase)
+		connStr = fmt.Sprintf("%s:%s@unix(%s)/%s?%s", mysqlUser, mysqlPwd, socketPath, mysqlDatabase, dsnParams)
 		log.Println("☁️ Cloud Run本番環境: Unixドメインソケット接続ルートを使用します")
 	} else {
-		// 💻 【ローカル環境】 TCP接続 + SSL証明書必須
 		rootCertPool := x509.NewCertPool()
 		pem, err := os.ReadFile("server-ca.pem")
 		if err != nil {
@@ -48,74 +45,116 @@ func init() {
 		}
 
 		rootCertPool.AppendCertsFromPEM(pem)
-		clientCert := make([]tls.Certificate, 0, 1)
 		certs, err := tls.LoadX509KeyPair("client-cert.pem", "client-key.pem")
 		if err != nil {
 			log.Fatal("❌ [LOCAL ERROR] client-cert.pem または client-key.pem の読み込みに失敗しました")
 		}
-		clientCert = append(clientCert, certs)
 
 		_ = mysql.RegisterTLSConfig("custom-tls", &tls.Config{
 			RootCAs:            rootCertPool,
-			Certificates:       clientCert,
+			Certificates:       []tls.Certificate{certs},
 			InsecureSkipVerify: true,
 		})
 
-		connStr = fmt.Sprintf("%s:%s@tcp(%s:3306)/%s?tls=custom-tls", mysqlUser, mysqlPwd, mysqlHost, mysqlDatabase)
+		connStr = fmt.Sprintf("%s:%s@tcp(%s:3306)/%s?tls=custom-tls&%s", mysqlUser, mysqlPwd, mysqlHost, mysqlDatabase, dsnParams)
 		log.Println("💻 ローカル環境: TCP + SSL接続ルートを使用します")
 	}
 
-	// 3. DB接続開始
 	var err error
 	db, err = sql.Open("mysql", connStr)
 	if err != nil {
 		log.Fatal("❌ [CRITICAL] sql.Open failed: ", err)
 	}
 
-	// 4. 疎通確認（エラーなら即死）
 	if err := db.Ping(); err != nil {
-		log.Fatal("❌ [CRITICAL] データベースへの疎通確認（Ping）に失敗しました。接続文字列を確認してください: ", err)
-	} else {
-		log.Println("✅ [SUCCESS] データベースとの接続に完全成功しました！！！")
+		log.Fatal("❌ [CRITICAL] データベースへの疎通確認（Ping）に失敗しました: ", err)
 	}
-	_ = db
+	log.Println("✅ [SUCCESS] データベースとの接続に成功しました")
 }
 
 func main() {
-	// 1. 各レイヤの依存関係を初期化 (DI)
+	// DAO層の初期化
 	userDao := dao.NewUserDao(db)
+	productDao := dao.NewProductDao(db)
+	chatDao := dao.NewChatDao(db)
+	notificationDao := dao.NewNotificationDao(db)
+	reviewDao := dao.NewReviewDao(db)
 
-	searchUsecase := usecase.NewSearchUserUsecase(userDao)
-	registerUsecase := usecase.NewRegisterUserUsecase(db, userDao)
+	// コントローラの初期化
+	userCtrl := controller.NewUserController(userDao, productDao, reviewDao)
+	productCtrl := controller.NewProductController(productDao, notificationDao, reviewDao, userDao)
+	chatCtrl := controller.NewChatController(chatDao, notificationDao)
+	notificationCtrl := controller.NewNotificationController(notificationDao)
+	geminiCtrl := controller.NewGeminiController(userDao)
 
-	searchController := controller.NewSearchUserController(searchUsecase)
-	registerController := controller.NewRegisterUserController(registerUsecase)
+	// ルーティング
+	mux := http.NewServeMux()
 
-	// 2. ルーティングの設定
-	// メソッドごとにハンドラーを切り替えるラッパー
-	http.HandleFunc("/user", func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodGet:
-			searchController.Handle(w, r)
-		case http.MethodPost:
-			registerController.Handle(w, r)
-		default:
-			w.WriteHeader(http.StatusMethodNotAllowed)
-		}
+	// 起動時一括取得
+	mux.HandleFunc("GET /api/init", userCtrl.Init)
+
+	// ユーザー
+	mux.HandleFunc("POST /api/users", userCtrl.Register)
+	mux.HandleFunc("GET /api/users/me", userCtrl.Me)
+	mux.HandleFunc("PUT /api/users/me", userCtrl.UpdateMe)
+	mux.HandleFunc("GET /api/users/{id}", userCtrl.Profile)
+	mux.HandleFunc("GET /api/users/{id}/reviews", productCtrl.UserReviews)
+	mux.HandleFunc("POST /api/blocks", userCtrl.Block)
+
+	// 商品
+	mux.HandleFunc("GET /api/products", productCtrl.List)
+	mux.HandleFunc("POST /api/products", productCtrl.Create)
+	mux.HandleFunc("GET /api/products/{id}", productCtrl.Detail)
+	mux.HandleFunc("PUT /api/products/{id}", productCtrl.Update)
+	mux.HandleFunc("DELETE /api/products/{id}", productCtrl.Delete)
+	mux.HandleFunc("POST /api/products/{id}/purchase", productCtrl.Purchase)
+	mux.HandleFunc("PUT /api/products/{id}/ship", productCtrl.Ship)
+	mux.HandleFunc("POST /api/products/{id}/like", productCtrl.Like)
+	mux.HandleFunc("DELETE /api/products/{id}/like", productCtrl.Unlike)
+	mux.HandleFunc("POST /api/products/{id}/reviews", productCtrl.CreateReview)
+
+	// マイページ系
+	mux.HandleFunc("GET /api/me/products", productCtrl.MyProducts)
+	mux.HandleFunc("GET /api/me/purchases", productCtrl.MyPurchases)
+	mux.HandleFunc("GET /api/me/likes", productCtrl.MyLikes)
+
+	// チャット・値引き交渉
+	mux.HandleFunc("POST /api/chatrooms", chatCtrl.CreateRoom)
+	mux.HandleFunc("GET /api/chatrooms", chatCtrl.ListRooms)
+	mux.HandleFunc("GET /api/chatrooms/{id}", chatCtrl.RoomDetail)
+	mux.HandleFunc("POST /api/chatrooms/{id}/messages", chatCtrl.SendMessage)
+	mux.HandleFunc("PUT /api/chatrooms/{id}/read", chatCtrl.MarkRead)
+	mux.HandleFunc("POST /api/chatrooms/{id}/discount", chatCtrl.ProposeDiscount)
+	mux.HandleFunc("PUT /api/chatrooms/{id}/discount/approve", chatCtrl.ApproveDiscount)
+
+	// 通知
+	mux.HandleFunc("GET /api/notifications", notificationCtrl.List)
+	mux.HandleFunc("PUT /api/notifications/{id}/read", notificationCtrl.MarkRead)
+
+	// Gemini連携
+	mux.HandleFunc("POST /api/gemini/listing", geminiCtrl.AnalyzeListing)
+	mux.HandleFunc("POST /api/gemini/reply", geminiCtrl.GenerateReply)
+	mux.HandleFunc("POST /api/gemini/search", geminiCtrl.AiSearch)
+
+	// ヘルスチェック（認証不要にするためAuthの外側で配線）
+	root := http.NewServeMux()
+	root.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
 	})
+	root.Handle("/api/", middleware.Auth(mux))
+
+	handler := middleware.CORS(root)
 
 	closeDBWithSysCall()
 
-	// 1. 環境変数 PORT からポート番号を取得（無ければデフォルトで 8080）
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
 	}
 
 	log.Printf("Listening on :%s...\n", port)
-
-	// 2. 文字列をガッチャンコして、取得したポートで起動
-	if err := http.ListenAndServe(":"+port, nil); err != nil {
+	if err := http.ListenAndServe(":"+port, handler); err != nil {
 		log.Fatal(err)
 	}
 }

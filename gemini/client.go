@@ -1,0 +1,184 @@
+package gemini
+
+import (
+	"bytes"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"strings"
+	"time"
+)
+
+var ErrNoAPIKey = errors.New("GEMINI_API_KEY is not set")
+
+func model() string {
+	if v := os.Getenv("GEMINI_MODEL"); v != "" {
+		return v
+	}
+	return "gemini-2.5-flash"
+}
+
+type part struct {
+	Text       string      `json:"text,omitempty"`
+	InlineData *inlineData `json:"inline_data,omitempty"`
+}
+
+type inlineData struct {
+	MimeType string `json:"mime_type"`
+	Data     string `json:"data"`
+}
+
+type generateRequest struct {
+	Contents []struct {
+		Parts []part `json:"parts"`
+	} `json:"contents"`
+	GenerationConfig *struct {
+		ResponseMimeType string `json:"response_mime_type,omitempty"`
+	} `json:"generationConfig,omitempty"`
+}
+
+// generate Gemini APIを呼んで最初の候補テキストを返す。jsonMode=trueでJSON出力を強制
+func generate(parts []part, jsonMode bool) (string, error) {
+	apiKey := os.Getenv("GEMINI_API_KEY")
+	if apiKey == "" {
+		return "", ErrNoAPIKey
+	}
+
+	var req generateRequest
+	req.Contents = make([]struct {
+		Parts []part `json:"parts"`
+	}, 1)
+	req.Contents[0].Parts = parts
+	if jsonMode {
+		req.GenerationConfig = &struct {
+			ResponseMimeType string `json:"response_mime_type,omitempty"`
+		}{ResponseMimeType: "application/json"}
+	}
+
+	body, err := json.Marshal(req)
+	if err != nil {
+		return "", err
+	}
+
+	url := fmt.Sprintf(
+		"https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s",
+		model(), apiKey)
+	client := &http.Client{Timeout: 60 * time.Second}
+	resp, err := client.Post(url, "application/json", bytes.NewReader(body))
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("gemini api error (%d): %s", resp.StatusCode, string(respBody))
+	}
+
+	var result struct {
+		Candidates []struct {
+			Content struct {
+				Parts []struct {
+					Text string `json:"text"`
+				} `json:"parts"`
+			} `json:"content"`
+		} `json:"candidates"`
+	}
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return "", err
+	}
+	if len(result.Candidates) == 0 || len(result.Candidates[0].Content.Parts) == 0 {
+		return "", errors.New("gemini returned no candidates")
+	}
+	return result.Candidates[0].Content.Parts[0].Text, nil
+}
+
+// ListingResult 出品支援の自動生成結果
+type ListingResult struct {
+	Title       string   `json:"title"`
+	Description string   `json:"description"`
+	Categories  []string `json:"categories"`
+	Tags        []string `json:"tags"`
+	Price       int      `json:"price_suggestion"`
+}
+
+// AnalyzeListing 商品画像から商品名・説明文・カテゴリ・タグ・参考価格を生成する
+func AnalyzeListing(imageURL string, categoryNames []string) (*ListingResult, error) {
+	imgResp, err := http.Get(imageURL)
+	if err != nil {
+		return nil, fmt.Errorf("画像の取得に失敗: %w", err)
+	}
+	defer imgResp.Body.Close()
+	imgBytes, err := io.ReadAll(io.LimitReader(imgResp.Body, 8<<20)) // 最大8MB
+	if err != nil {
+		return nil, err
+	}
+	mimeType := imgResp.Header.Get("Content-Type")
+	if !strings.HasPrefix(mimeType, "image/") {
+		mimeType = "image/jpeg"
+	}
+
+	prompt := fmt.Sprintf(`あなたはフリマアプリの出品アシスタントです。この商品画像を解析して、以下のJSONだけを返してください。
+{"title": "魅力的な商品名(40文字以内)", "description": "丁寧な商品説明文(状態・特徴・おすすめポイントを改行区切りで)", "categories": ["次のリストから当てはまるものを1〜3個: %s"], "tags": ["検索用キーワードを3〜6個"], "price_suggestion": 想定中古販売価格の整数(円)}`,
+		strings.Join(categoryNames, ", "))
+
+	text, err := generate([]part{
+		{InlineData: &inlineData{MimeType: mimeType, Data: base64.StdEncoding.EncodeToString(imgBytes)}},
+		{Text: prompt},
+	}, true)
+	if err != nil {
+		return nil, err
+	}
+
+	var result ListingResult
+	if err := json.Unmarshal([]byte(text), &result); err != nil {
+		return nil, fmt.Errorf("生成結果のJSONパースに失敗: %w", err)
+	}
+	return &result, nil
+}
+
+// GenerateReply チャット返信文の生成。role: "buyer" or "seller"
+func GenerateReply(role, productName, instruction string) (string, error) {
+	roleDesc := "フリマアプリで商品の購入を検討している購入希望者"
+	if role == "seller" {
+		roleDesc = "フリマアプリの出品者"
+	}
+	prompt := fmt.Sprintf(`あなたは%sです。商品「%s」のチャットで送るメッセージを1通だけ作成してください。
+指示: %s
+条件: 日本語で、丁寧だが堅すぎない口調。前置きや説明は不要でメッセージ本文だけを返す。100文字以内。`,
+		roleDesc, productName, instruction)
+	return generate([]part{{Text: prompt}}, false)
+}
+
+// SearchConditions AI検索: 自然文から検索条件を抽出
+type SearchConditions struct {
+	Keyword    string `json:"keyword"`
+	Category   string `json:"category"`
+	MinPrice   int    `json:"min_price"`
+	MaxPrice   int    `json:"max_price"`
+	Suggestion string `json:"suggestion"`
+}
+
+// ParseSearchPrompt 「20代男性に似合う1万円以内の黒い夏服」のような文を検索条件JSONへ変換
+func ParseSearchPrompt(userPrompt string, categoryNames []string) (*SearchConditions, error) {
+	prompt := fmt.Sprintf(`あなたはフリマアプリの検索アシスタントです。ユーザーの要望を検索条件に変換して、以下のJSONだけを返してください。
+{"keyword": "商品検索に使う最重要キーワード(1〜2語)", "category": "次のリストから1つ。該当なしなら空文字: %s", "min_price": 最低価格の整数(指定なしは0), "max_price": 最高価格の整数(指定なしは0), "suggestion": "ユーザーへのひとこと提案(50文字以内)"}
+ユーザーの要望: %s`,
+		strings.Join(categoryNames, ", "), userPrompt)
+
+	text, err := generate([]part{{Text: prompt}}, true)
+	if err != nil {
+		return nil, err
+	}
+	var result SearchConditions
+	if err := json.Unmarshal([]byte(text), &result); err != nil {
+		return nil, fmt.Errorf("生成結果のJSONパースに失敗: %w", err)
+	}
+	return &result, nil
+}
