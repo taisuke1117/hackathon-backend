@@ -21,18 +21,31 @@ import (
 var db *sql.DB
 
 func init() {
-	// 1. 🔑 【SSL証明書の登録】（これはローカル接続に必須です）
+	// 1. 🌍 環境変数の読み込み
+	mysqlUser := os.Getenv("MYSQL_USER")
+	mysqlPwd := os.Getenv("MYSQL_PWD")
+	mysqlHost := os.Getenv("MYSQL_HOST")
+	mysqlDatabase := os.Getenv("MYSQL_DATABASE")
+
+	// 2. 🔑 【SSL証明書の登録】
+	// ファイルが存在する場合のみローカル用SSL設定を通す（Cloud Run上では安全にスキップされる）
 	rootCertPool := x509.NewCertPool()
 	pem, err := os.ReadFile("server-ca.pem")
+
+	var connStr string
 	if err != nil {
-		log.Println("💡 server-ca.pem なし（Cloud Run環境の可能性あり。処理を続行します）")
+		// ☁️ 【本番（Cloud Run）環境用の接続文字列】
+		// 証明書ファイルがない場合は、通常の接続文字列を組み立てる
+		log.Println("💡 server-ca.pem が見つからないため、通常の接続を試みます（Cloud Run環境）")
+		connStr = fmt.Sprintf("%s:%s@tcp(%s:3306)/%s", mysqlUser, mysqlPwd, mysqlHost, mysqlDatabase)
 	} else {
+		// 💻 【ローカル環境用の接続文字列】
 		rootCertPool.AppendCertsFromPEM(pem)
 
 		clientCert := make([]tls.Certificate, 0, 1)
 		certs, err := tls.LoadX509KeyPair("client-cert.pem", "client-key.pem")
 		if err != nil {
-			log.Fatal("❌ client-cert.pem または client-key.pem の読み込みに失敗:", err)
+			log.Println("⚠️ ローカル証明書の読み込みに失敗しました（処理は続行します）:", err)
 		}
 		clientCert = append(clientCert, certs)
 
@@ -42,28 +55,22 @@ func init() {
 			Certificates:       clientCert,
 			InsecureSkipVerify: true,
 		})
+
+		// 末尾に `?tls=custom-tls` をつける
+		connStr = fmt.Sprintf("%s:%s@tcp(%s:3306)/%s?tls=custom-tls", mysqlUser, mysqlPwd, mysqlHost, mysqlDatabase)
 	}
 
-	// 2. 🌍 【環境変数の読み込み】（元の綺麗な形に戻します！）
-	mysqlUser := os.Getenv("MYSQL_USER")
-	mysqlPwd := os.Getenv("MYSQL_PWD")
-	mysqlHost := os.Getenv("MYSQL_HOST") // 例: 35.226.67.117
-	mysqlDatabase := os.Getenv("MYSQL_DATABASE")
-
-	// 3. 🔗 接続文字列の組み立て
-	// 末尾に `?tls=custom-tls` をつけてSSLを強制します
-	connStr := fmt.Sprintf("%s:%s@tcp(%s:3306)/%s?tls=custom-tls", mysqlUser, mysqlPwd, mysqlHost, mysqlDatabase)
-
-	// 4. DB接続開始
+	// 3. DB接続開始
 	db, err = sql.Open("mysql", connStr)
 	if err != nil {
 		log.Println("⚠️ WARNING: sql.Open failed:", err)
 	}
 
+	// 💡 Cloud Runの起動を邪魔しないよう、Ping失敗でも log.Fatal は絶対にさせない
 	if err := db.Ping(); err != nil {
 		log.Println("⚠️ WARNING: db.Ping failed:", err)
 	} else {
-		log.Println("✅ SUCCESS: Database connected via SSL using Environment Variables!!!")
+		log.Println("✅ SUCCESS: Database connected successfully!!!")
 	}
 	_ = db
 }
