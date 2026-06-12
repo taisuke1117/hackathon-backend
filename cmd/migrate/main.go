@@ -84,6 +84,7 @@ func main() {
 				INDEX idx_reviews_reviewee (reviewee_id)
 			)`},
 		{"products.tags カラム追加", `ALTER TABLE products ADD COLUMN tags TEXT`},
+		{"products.condition カラム追加", `ALTER TABLE products ADD COLUMN condition VARCHAR(50)`},
 		{"products.status デフォルトを英語化", `ALTER TABLE products ALTER COLUMN status SET DEFAULT 'available'`},
 		{"既存statusを英語コードへ移行(出品中)", `UPDATE products SET status='available' WHERE status='出品中'`},
 		{"既存statusを英語コードへ移行(未発送)", `UPDATE products SET status='unshipped' WHERE status IN ('未発送','購入済み')`},

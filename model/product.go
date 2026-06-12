@@ -24,6 +24,7 @@ type ProductDetail struct {
 	Name       string     `json:"name"`
 	Price      int        `json:"price"`
 	Detail     string     `json:"detail"`
+	Condition  string     `json:"condition"`
 	Images     []string   `json:"images"`
 	Categories []Category `json:"categories"`
 	Tags       []string   `json:"tags"`
@@ -40,6 +41,7 @@ type SaveProductRequest struct {
 	Name        string   `json:"name"`
 	Price       int      `json:"price"`
 	Detail      string   `json:"detail"`
+	Condition   string   `json:"condition"`
 	CategoryIds []int64  `json:"category_ids"`
 	Tags        []string `json:"tags"`
 	ImageUrls   []string `json:"image_urls"`

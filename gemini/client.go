@@ -112,19 +112,20 @@ func generate(parts []part, jsonMode bool) (string, error) {
 type ListingResult struct {
 	Title       string   `json:"title"`
 	Description string   `json:"description"`
+	Condition   string   `json:"condition"`
 	Categories  []string `json:"categories"`
 	Tags        []string `json:"tags"`
 	Price       int      `json:"price_suggestion"`
 }
 
-// AnalyzeListing 商品画像から商品名・説明文・カテゴリ・タグ・参考価格を生成する
+// AnalyzeListing 商品画像から出品情報一式を生成する
 func AnalyzeListing(imageURL string, categoryNames []string) (*ListingResult, error) {
 	imgResp, err := http.Get(imageURL)
 	if err != nil {
 		return nil, fmt.Errorf("画像の取得に失敗: %w", err)
 	}
 	defer imgResp.Body.Close()
-	imgBytes, err := io.ReadAll(io.LimitReader(imgResp.Body, 8<<20)) // 最大8MB
+	imgBytes, err := io.ReadAll(io.LimitReader(imgResp.Body, 8<<20))
 	if err != nil {
 		return nil, err
 	}
@@ -133,8 +134,18 @@ func AnalyzeListing(imageURL string, categoryNames []string) (*ListingResult, er
 		mimeType = "image/jpeg"
 	}
 
-	prompt := fmt.Sprintf(`あなたはフリマアプリの出品アシスタントです。この商品画像を解析して、以下のJSONだけを返してください。
-{"title": "魅力的な商品名(40文字以内)", "description": "丁寧な商品説明文(状態・特徴・おすすめポイントを改行区切りで)", "categories": ["次のリストから当てはまるものを1〜3個: %s"], "tags": ["検索用キーワードを3〜6個"], "price_suggestion": 想定中古販売価格の整数(円)}`,
+	prompt := fmt.Sprintf(`あなたはフリマアプリ（メルカリのようなCtoCプラットフォーム）で自分の持ち物を出品しようとしているユーザーの代わりに出品情報を作成するアシスタントです。
+
+この商品画像を解析して、実際のフリマアプリの出品ページにそのまま使える情報を以下のJSONだけで返してください。
+
+{
+  "title": "ブランド名・型番・サイズ・色などを含む魅力的な商品名（40文字以内）",
+  "condition": "画像から判断して次の6段階から1つだけ選ぶ: 新品、未使用 / 未使用に近い / 目立った傷や汚れなし / やや傷や汚れあり / 傷や汚れあり / 全体的に状態が悪い",
+  "description": "フリマアプリの説明文形式で以下のセクション構成にする（改行は\\nで表現）:\n【商品説明】\\n自宅で使用していた〇〇を出品します。〇〇などの特徴があります。\\n\\n【商品の状態】\\n（conditionと同じ状態を記載。目視できる傷・汚れ・使用感を具体的に）\\n\\n【配送について】\\n丁寧に梱包してお送りします。\\n\\n【注意事項】\\n・素人保管のため神経質な方はご遠慮ください\\n・ご不明点はコメントにてお気軽にどうぞ",
+  "categories": ["次のカテゴリリストから最も当てはまるものを1〜2個: %s"],
+  "tags": ["フリマ・オークションで実際に使われる検索キーワードを3〜6個"],
+  "price_suggestion": フリマ・オークションサイトでの実際の中古取引相場を考慮した適切な販売価格（整数・円。新品定価ではなく中古市場価格を基準にする）
+}`,
 		strings.Join(categoryNames, ", "))
 
 	text, err := generate([]part{

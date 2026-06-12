@@ -84,11 +84,11 @@ func (d *ProductDao) FindDetail(viewerId string, productId int64) (*model.Produc
 	var tagsJSON string
 	err := d.DB.QueryRow(`
 		SELECT p.product_id, p.seller_id, COALESCE(p.buyer_id, ''), p.name, p.price, COALESCE(p.detail, ''),
-		       COALESCE(p.tags, '[]'), p.views_count, p.likes_count, p.status, p.created_at,
+		       COALESCE(p.condition, ''), COALESCE(p.tags, '[]'), p.views_count, p.likes_count, p.status, p.created_at,
 		       EXISTS(SELECT 1 FROM likes l WHERE l.product_id = p.product_id AND l.user_id = ?)
 		FROM products p WHERE p.product_id = ?`, viewerId, productId).Scan(
 		&p.ProductId, &p.SellerId, &p.BuyerId, &p.Name, &p.Price, &p.Detail,
-		&tagsJSON, &p.ViewsCount, &p.LikesCount, &p.Status, &p.CreatedAt, &p.LikedByMe)
+		&p.Condition, &tagsJSON, &p.ViewsCount, &p.LikesCount, &p.Status, &p.CreatedAt, &p.LikedByMe)
 	if err == sql.ErrNoRows {
 		return nil, ErrNotFound
 	}
@@ -154,9 +154,9 @@ func (d *ProductDao) Create(sellerId string, req *model.SaveProductRequest) (int
 	}
 
 	res, err := tx.Exec(`
-		INSERT INTO products (seller_id, name, category_id, price, detail, image_url, tags, status)
-		VALUES (?, ?, ?, ?, ?, ?, ?, 'available')`,
-		sellerId, req.Name, firstCategory, req.Price, req.Detail, mainImage, tagsToJSON(req.Tags))
+		INSERT INTO products (seller_id, name, category_id, price, detail, condition, image_url, tags, status)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'available')`,
+		sellerId, req.Name, firstCategory, req.Price, req.Detail, req.Condition, mainImage, tagsToJSON(req.Tags))
 	if err != nil {
 		return 0, err
 	}
@@ -192,9 +192,9 @@ func (d *ProductDao) UpdateProduct(sellerId string, productId int64, req *model.
 		firstCategory = sql.NullInt64{Int64: req.CategoryIds[0], Valid: true}
 	}
 	if _, err := tx.Exec(`
-		UPDATE products SET name = ?, category_id = ?, price = ?, detail = ?, image_url = ?, tags = ?
+		UPDATE products SET name = ?, category_id = ?, price = ?, detail = ?, condition = ?, image_url = ?, tags = ?
 		WHERE product_id = ?`,
-		req.Name, firstCategory, req.Price, req.Detail, mainImage, tagsToJSON(req.Tags), productId); err != nil {
+		req.Name, firstCategory, req.Price, req.Detail, req.Condition, mainImage, tagsToJSON(req.Tags), productId); err != nil {
 		return err
 	}
 
