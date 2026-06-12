@@ -63,14 +63,16 @@ func init() {
 	// 3. DB接続開始
 	db, err = sql.Open("mysql", connStr)
 	if err != nil {
-		log.Println("⚠️ WARNING: sql.Open failed:", err)
+		// sql.Open自体のエラー（設定ミスなど）で強制終了
+		log.Fatal("❌ [CRITICAL] sql.Open failed: ", err)
 	}
 
-	// 💡 Cloud Runの起動を邪魔しないよう、Ping失敗でも log.Fatal は絶対にさせない
+	// 🔴 ここを書き換えます！
+	// 4. 運命の疎通確認（Pingが通らなければ、ログを吐いてその場で即死させる）
 	if err := db.Ping(); err != nil {
-		log.Println("⚠️ WARNING: db.Ping failed:", err)
+		log.Fatal("❌ [CRITICAL] データベースへの接続に失敗したため、サーバーの起動を停止します: ", err)
 	} else {
-		log.Println("✅ SUCCESS: Database connected successfully!!!")
+		log.Println("✅ [SUCCESS] データベースへの疎通確認（Ping）に完全成功しました！！！")
 	}
 	_ = db
 }
