@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/go-sql-driver/mysql"
@@ -21,58 +22,59 @@ import (
 var db *sql.DB
 
 func init() {
-	// 1. 🌍 環境変数の読み込み
+	// 1. 環境変数の取得
 	mysqlUser := os.Getenv("MYSQL_USER")
 	mysqlPwd := os.Getenv("MYSQL_PWD")
 	mysqlHost := os.Getenv("MYSQL_HOST")
 	mysqlDatabase := os.Getenv("MYSQL_DATABASE")
 
-	// 2. 🔑 【SSL証明書の登録】
-	// ファイルが存在する場合のみローカル用SSL設定を通す（Cloud Run上では安全にスキップされる）
-	rootCertPool := x509.NewCertPool()
-	pem, err := os.ReadFile("server-ca.pem")
-
 	var connStr string
-	if err != nil {
-		// ☁️ 【本番（Cloud Run）環境用の接続文字列】
-		// 証明書ファイルがない場合は、通常の接続文字列を組み立てる
-		log.Println("💡 server-ca.pem が見つからないため、通常の接続を試みます（Cloud Run環境）")
-		connStr = fmt.Sprintf("%s:%s@tcp(%s:3306)/%s", mysqlUser, mysqlPwd, mysqlHost, mysqlDatabase)
+
+	// 2. 本番（Unixソケット）かローカル（TCP）かを判別して文字列を組む
+	if strings.HasPrefix(mysqlHost, "unix(") {
+		// ☁️ 【本番（Cloud Run）環境】
+		socketPath := strings.TrimSuffix(strings.TrimPrefix(mysqlHost, "unix("), ")")
+		connStr = fmt.Sprintf("%s:%s@unix(%s)/%s", mysqlUser, mysqlPwd, socketPath, mysqlDatabase)
 	} else {
-		// 💻 【ローカル環境用の接続文字列】
-		rootCertPool.AppendCertsFromPEM(pem)
+		// 💻 【ローカル環境】 TCP接続
+		rootCertPool := x509.NewCertPool()
+		pem, err := os.ReadFile("server-ca.pem")
 
-		clientCert := make([]tls.Certificate, 0, 1)
-		certs, err := tls.LoadX509KeyPair("client-cert.pem", "client-key.pem")
 		if err != nil {
-			log.Println("⚠️ ローカル証明書の読み込みに失敗しました（処理は続行します）:", err)
+			// 💡 証明書がない場合は通常のTCP（もしローカルでSSLをオフにした場合用）
+			connStr = fmt.Sprintf("%s:%s@tcp(%s:3306)/%s", mysqlUser, mysqlPwd, mysqlHost, mysqlDatabase)
+		} else {
+			// 🔒 証明書がある場合はSSLを強制
+			rootCertPool.AppendCertsFromPEM(pem)
+			clientCert := make([]tls.Certificate, 0, 1)
+			certs, err := tls.LoadX509KeyPair("client-cert.pem", "client-key.pem")
+			if err != nil {
+				// 証明書の読み込み自体に失敗したら即死
+				log.Fatal("❌ [CRITICAL] ローカル証明書の読み込みに失敗しました: ", err)
+			}
+			clientCert = append(clientCert, certs)
+
+			_ = mysql.RegisterTLSConfig("custom-tls", &tls.Config{
+				RootCAs:            rootCertPool,
+				Certificates:       clientCert,
+				InsecureSkipVerify: true,
+			})
+			connStr = fmt.Sprintf("%s:%s@tcp(%s:3306)/%s?tls=custom-tls", mysqlUser, mysqlPwd, mysqlHost, mysqlDatabase)
 		}
-		clientCert = append(clientCert, certs)
-
-		// 「custom-tls」という名前で登録
-		_ = mysql.RegisterTLSConfig("custom-tls", &tls.Config{
-			RootCAs:            rootCertPool,
-			Certificates:       clientCert,
-			InsecureSkipVerify: true,
-		})
-
-		// 末尾に `?tls=custom-tls` をつける
-		connStr = fmt.Sprintf("%s:%s@tcp(%s:3306)/%s?tls=custom-tls", mysqlUser, mysqlPwd, mysqlHost, mysqlDatabase)
 	}
 
 	// 3. DB接続開始
+	var err error
 	db, err = sql.Open("mysql", connStr)
 	if err != nil {
-		// sql.Open自体のエラー（設定ミスなど）で強制終了
 		log.Fatal("❌ [CRITICAL] sql.Open failed: ", err)
 	}
 
-	// 🔴 ここを書き換えます！
-	// 4. 運命の疎通確認（Pingが通らなければ、ログを吐いてその場で即死させる）
+	// 🔴 4. 疎通確認（ここで繋がらなければローカルでも本番でも100%エラーで即死します）
 	if err := db.Ping(); err != nil {
-		log.Fatal("❌ [CRITICAL] データベースへの接続に失敗したため、サーバーの起動を停止します: ", err)
+		log.Fatal("❌ [CRITICAL] データベースへの接続（Ping）に失敗したため、起動を停止します: ", err)
 	} else {
-		log.Println("✅ [SUCCESS] データベースへの疎通確認（Ping）に完全成功しました！！！")
+		log.Println("✅ [SUCCESS] データベースとの接続に完全成功しました！！！")
 	}
 	_ = db
 }
