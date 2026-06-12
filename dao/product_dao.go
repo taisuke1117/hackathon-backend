@@ -3,17 +3,9 @@ package dao
 import (
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"main/model"
 )
 
-var (
-	ErrNotFound     = errors.New("not found")
-	ErrForbidden    = errors.New("forbidden")
-	ErrConflict     = errors.New("conflict")
-	ErrOwnProduct   = errors.New("cannot buy own product")
-	ErrNotPurchased = errors.New("not purchased by you")
-)
 
 type ProductDao struct {
 	DB *sql.DB

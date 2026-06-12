@@ -104,21 +104,45 @@ func main() {
 		log.Printf("✅ %s", s.desc)
 	}
 
-	// カテゴリマスターが空ならフロントの選択肢と揃えて投入
-	var count int
-	if err := db.QueryRow("SELECT COUNT(*) FROM categories").Scan(&count); err != nil {
-		log.Fatal(err)
+	// カテゴリマスターを最新リストに同期（存在しない名前だけ追加）
+	categories := []string{
+		"レディース",
+		"メンズ",
+		"キッズ・ベビー",
+		"アウター・ジャケット",
+		"バッグ・財布",
+		"シューズ",
+		"アクセサリー・ジュエリー",
+		"家電・スマホ",
+		"PC・タブレット",
+		"カメラ・光学機器",
+		"本・雑誌・漫画",
+		"ゲーム・ホビー",
+		"おもちゃ・グッズ",
+		"スポーツ・アウトドア",
+		"インテリア・家具",
+		"コスメ・美容・香水",
+		"食品・飲料",
+		"楽器・音響機器",
+		"ビンテージ・コレクション",
+		"その他",
 	}
-	if count == 0 {
-		names := []string{"レディース", "メンズ", "ジャケット・アウター", "家電・スマホ", "カメラ", "本・ゲーム", "ビンテージ", "その他"}
-		for _, n := range names {
-			if _, err := db.Exec("INSERT INTO categories (name) VALUES (?)", n); err != nil {
-				log.Fatal(err)
-			}
+	added := 0
+	for _, name := range categories {
+		res, err := db.Exec(
+			"INSERT INTO categories (name) SELECT ? FROM dual WHERE NOT EXISTS (SELECT 1 FROM categories WHERE name = ?)",
+			name, name)
+		if err != nil {
+			log.Printf("⚠️  カテゴリ追加スキップ(%s): %v", name, err)
+			continue
 		}
-		log.Printf("✅ カテゴリマスターを%d件投入", len(names))
+		n, _ := res.RowsAffected()
+		added += int(n)
+	}
+	if added > 0 {
+		log.Printf("✅ カテゴリを%d件追加しました", added)
 	} else {
-		log.Printf("⏭️  カテゴリマスターは既に%d件あり", count)
+		log.Printf("⏭️  カテゴリはすべて最新です")
 	}
 
 	log.Println("🎉 マイグレーション完了")
