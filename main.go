@@ -136,12 +136,17 @@ func main() {
 	mux.HandleFunc("POST /api/gemini/reply", geminiCtrl.GenerateReply)
 	mux.HandleFunc("POST /api/gemini/search", geminiCtrl.AiSearch)
 
+	// 画像アップロード（GCSへ保存）
+	mux.HandleFunc("POST /api/images", controller.UploadImage)
+
 	// ヘルスチェック（認証不要にするためAuthの外側で配線）
 	root := http.NewServeMux()
 	root.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
+	// 画像配信は<img>タグから直接参照されるため認証不要
+	root.HandleFunc("GET /images/{object...}", controller.ServeImage)
 	root.Handle("/api/", middleware.Auth(mux))
 
 	handler := middleware.CORS(root)
