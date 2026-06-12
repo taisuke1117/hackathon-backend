@@ -19,7 +19,7 @@ func model() string {
 	if v := os.Getenv("GEMINI_MODEL"); v != "" {
 		return v
 	}
-	return "gemini-2.5-flash"
+	return "gemini-flash-latest"
 }
 
 type part struct {
@@ -64,11 +64,20 @@ func generate(parts []part, jsonMode bool) (string, error) {
 		return "", err
 	}
 
+	// 新形式のAPIキー(AQ.プレフィックス)はクエリパラメータでは認証できないため、
+	// X-goog-api-key ヘッダーで渡す（旧AIza形式のキーもこのヘッダーで動く）
 	url := fmt.Sprintf(
-		"https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s",
-		model(), apiKey)
+		"https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent",
+		model())
+	httpReq, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return "", err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("X-goog-api-key", apiKey)
+
 	client := &http.Client{Timeout: 60 * time.Second}
-	resp, err := client.Post(url, "application/json", bytes.NewReader(body))
+	resp, err := client.Do(httpReq)
 	if err != nil {
 		return "", err
 	}
