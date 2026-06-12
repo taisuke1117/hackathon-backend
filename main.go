@@ -30,37 +30,39 @@ func init() {
 
 	var connStr string
 
-	// 2. 本番（Unixソケット）かローカル（TCP）かを判別して文字列を組む
+	// 2. 🌍 本番（Unixソケット）かローカル（TCP）かを100%正確に判別する
 	if strings.HasPrefix(mysqlHost, "unix(") {
 		// ☁️ 【本番（Cloud Run）環境】
+		// unix(/cloudsql/term9-taisuke-ohmori:us-central1:uttc) からパスだけを抜き出す
 		socketPath := strings.TrimSuffix(strings.TrimPrefix(mysqlHost, "unix("), ")")
+
+		// 本番環境はGCPの内部ネットワークなので、SSL証明書(pem)の読み込みは一切不要です！
 		connStr = fmt.Sprintf("%s:%s@unix(%s)/%s", mysqlUser, mysqlPwd, socketPath, mysqlDatabase)
+		log.Println("☁️ Cloud Run本番環境: Unixドメインソケット接続ルートを使用します")
 	} else {
-		// 💻 【ローカル環境】 TCP接続
+		// 💻 【ローカル環境】 TCP接続 + SSL証明書必須
 		rootCertPool := x509.NewCertPool()
 		pem, err := os.ReadFile("server-ca.pem")
-
 		if err != nil {
-			// 💡 証明書がない場合は通常のTCP（もしローカルでSSLをオフにした場合用）
-			connStr = fmt.Sprintf("%s:%s@tcp(%s:3306)/%s", mysqlUser, mysqlPwd, mysqlHost, mysqlDatabase)
-		} else {
-			// 🔒 証明書がある場合はSSLを強制
-			rootCertPool.AppendCertsFromPEM(pem)
-			clientCert := make([]tls.Certificate, 0, 1)
-			certs, err := tls.LoadX509KeyPair("client-cert.pem", "client-key.pem")
-			if err != nil {
-				// 証明書の読み込み自体に失敗したら即死
-				log.Fatal("❌ [CRITICAL] ローカル証明書の読み込みに失敗しました: ", err)
-			}
-			clientCert = append(clientCert, certs)
-
-			_ = mysql.RegisterTLSConfig("custom-tls", &tls.Config{
-				RootCAs:            rootCertPool,
-				Certificates:       clientCert,
-				InsecureSkipVerify: true,
-			})
-			connStr = fmt.Sprintf("%s:%s@tcp(%s:3306)/%s?tls=custom-tls", mysqlUser, mysqlPwd, mysqlHost, mysqlDatabase)
+			log.Fatal("❌ [LOCAL ERROR] ローカル起動ですが server-ca.pem が見つかりません。現在のMYSQL_HOST: ", mysqlHost)
 		}
+
+		rootCertPool.AppendCertsFromPEM(pem)
+		clientCert := make([]tls.Certificate, 0, 1)
+		certs, err := tls.LoadX509KeyPair("client-cert.pem", "client-key.pem")
+		if err != nil {
+			log.Fatal("❌ [LOCAL ERROR] client-cert.pem または client-key.pem の読み込みに失敗しました")
+		}
+		clientCert = append(clientCert, certs)
+
+		_ = mysql.RegisterTLSConfig("custom-tls", &tls.Config{
+			RootCAs:            rootCertPool,
+			Certificates:       clientCert,
+			InsecureSkipVerify: true,
+		})
+
+		connStr = fmt.Sprintf("%s:%s@tcp(%s:3306)/%s?tls=custom-tls", mysqlUser, mysqlPwd, mysqlHost, mysqlDatabase)
+		log.Println("💻 ローカル環境: TCP + SSL接続ルートを使用します")
 	}
 
 	// 3. DB接続開始
@@ -70,9 +72,9 @@ func init() {
 		log.Fatal("❌ [CRITICAL] sql.Open failed: ", err)
 	}
 
-	// 🔴 4. 疎通確認（ここで繋がらなければローカルでも本番でも100%エラーで即死します）
+	// 4. 疎通確認（エラーなら即死）
 	if err := db.Ping(); err != nil {
-		log.Fatal("❌ [CRITICAL] データベースへの接続（Ping）に失敗したため、起動を停止します: ", err)
+		log.Fatal("❌ [CRITICAL] データベースへの疎通確認（Ping）に失敗しました。接続文字列を確認してください: ", err)
 	} else {
 		log.Println("✅ [SUCCESS] データベースとの接続に完全成功しました！！！")
 	}
