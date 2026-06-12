@@ -117,12 +117,12 @@ func (d *ChatDao) ListRooms(userId, role string) ([]model.ChatRoomSummary, error
 func (d *ChatDao) FindRoomDetail(userId string, roomId int64) (*model.ChatRoomDetail, error) {
 	var detail model.ChatRoomDetail
 	err := d.DB.QueryRow(`
-		SELECT r.chatroom_id, p.product_id, p.name, COALESCE(p.image_url, ''), p.price, p.status,
+		SELECT r.chatroom_id, p.product_id, p.name, COALESCE(p.description, ''), COALESCE(p.image_url, ''), p.price, p.status,
 		       p.seller_id, r.proposer_id, r.discount_proposed, r.discount_approved
 		FROM chatrooms r
 		JOIN products p ON p.product_id = r.product_id
 		WHERE r.chatroom_id = ?`, roomId).Scan(
-		&detail.ChatroomId, &detail.ProductId, &detail.ProductName, &detail.ProductImage, &detail.ProductPrice, &detail.ProductStatus,
+		&detail.ChatroomId, &detail.ProductId, &detail.ProductName, &detail.ProductDescription, &detail.ProductImage, &detail.ProductPrice, &detail.ProductStatus,
 		&detail.SellerId, &detail.ProposerId, &detail.DiscountProposed, &detail.DiscountApproved)
 	if err == sql.ErrNoRows {
 		return nil, ErrNotFound

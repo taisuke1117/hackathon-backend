@@ -31,17 +31,18 @@ type ChatMessage struct {
 
 // ChatRoomDetail ルーム詳細（メタ情報＋メッセージ一覧）
 type ChatRoomDetail struct {
-	ChatroomId       int64         `json:"chatroom_id"`
-	ProductId        int64         `json:"product_id"`
-	ProductName      string        `json:"product_name"`
-	ProductImage     string        `json:"product_image"`
-	ProductPrice     int           `json:"product_price"`
-	ProductStatus    string        `json:"product_status"`
-	SellerId         string        `json:"seller_id"`
-	ProposerId       string        `json:"proposer_id"`
-	OtherUserName    string        `json:"other_user_name"`
-	OtherUserIcon    string        `json:"other_user_icon"`
-	DiscountProposed int           `json:"discount_proposed"`
-	DiscountApproved int           `json:"discount_approved"`
-	Messages         []ChatMessage `json:"messages"`
+	ChatroomId          int64         `json:"chatroom_id"`
+	ProductId           int64         `json:"product_id"`
+	ProductName         string        `json:"product_name"`
+	ProductDescription  string        `json:"product_description"`
+	ProductImage        string        `json:"product_image"`
+	ProductPrice        int           `json:"product_price"`
+	ProductStatus       string        `json:"product_status"`
+	SellerId            string        `json:"seller_id"`
+	ProposerId          string        `json:"proposer_id"`
+	OtherUserName       string        `json:"other_user_name"`
+	OtherUserIcon       string        `json:"other_user_icon"`
+	DiscountProposed    int           `json:"discount_proposed"`
+	DiscountApproved    int           `json:"discount_approved"`
+	Messages            []ChatMessage `json:"messages"`
 }

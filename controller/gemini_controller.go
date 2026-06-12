@@ -55,12 +55,17 @@ func (c *GeminiController) AnalyzeListing(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, result)
 }
 
-// GenerateReply POST /api/gemini/reply {role, product_name, instruction} — チャット返信文生成
+// GenerateReply POST /api/gemini/reply — チャット返信文生成
 func (c *GeminiController) GenerateReply(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Role        string `json:"role"` // "buyer" or "seller"
-		ProductName string `json:"product_name"`
-		Instruction string `json:"instruction"`
+		Role             string                 `json:"role"` // "buyer" or "seller"
+		ProductName      string                 `json:"product_name"`
+		ProductDesc      string                 `json:"product_description"`
+		ProductPrice     int                    `json:"product_price"`
+		DiscountProposed int                    `json:"discount_proposed"`
+		DiscountApproved int                    `json:"discount_approved"`
+		Messages         []gemini.ChatMessageCtx `json:"messages"`
+		Instruction      string                 `json:"instruction"`
 	}
 	if !decodeBody(w, r, &req) {
 		return
@@ -69,7 +74,11 @@ func (c *GeminiController) GenerateReply(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, "instructionは必須です")
 		return
 	}
-	text, err := gemini.GenerateReply(req.Role, req.ProductName, req.Instruction)
+	text, err := gemini.GenerateReply(
+		req.Role, req.ProductName, req.ProductDesc,
+		req.ProductPrice, req.DiscountProposed, req.DiscountApproved,
+		req.Messages, req.Instruction,
+	)
 	if err != nil {
 		handleGeminiError(w, err)
 		return
