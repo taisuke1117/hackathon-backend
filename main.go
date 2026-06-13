@@ -50,6 +50,7 @@ func main() {
 	chatDao := dao.NewChatDao(database)
 	notificationDao := dao.NewNotificationDao(database)
 	reviewDao := dao.NewReviewDao(database)
+	liveDao := dao.NewLiveDao(database)
 
 	// ── Controllerの生成（DAOを注入） ────────────────────────
 	// Controller: HTTPリクエストを受け取り、DAOを呼んでレスポンスを返す層
@@ -60,11 +61,12 @@ func main() {
 	chatCtrl := controller.NewChatController(chatDao, notificationDao)
 	notificationCtrl := controller.NewNotificationController(notificationDao)
 	geminiCtrl := controller.NewGeminiController(userDao)
+	liveCtrl := controller.NewLiveController(liveDao)
 
 	// ── ルーターのセットアップ ───────────────────────────────
 	// 全エンドポイントを登録してHTTPハンドラを返す
 	// 認証ミドルウェア・CORSミドルウェアもここで組み込まれる
-	handler := router.Setup(userCtrl, productCtrl, chatCtrl, notificationCtrl, geminiCtrl)
+	handler := router.Setup(userCtrl, productCtrl, chatCtrl, notificationCtrl, geminiCtrl, liveCtrl)
 
 	// ── HTTPサーバー起動 ─────────────────────────────────────
 	// Cloud Run は PORT 環境変数でポートを指定してくる
@@ -180,6 +182,43 @@ func runMigrations(database *sql.DB) {
 		{"既存statusを英語化(未発送)", `UPDATE products SET status='unshipped' WHERE status IN ('未発送','購入済み')`},
 		{"既存statusを英語化(発送済み)", `UPDATE products SET status='shipped' WHERE status IN ('発送済み','発送済')`},
 		{"旧 user テーブル削除", "DROP TABLE IF EXISTS `user`"},
+
+		// ── ライブ配信テーブル ──
+		{"live_rooms テーブル作成", `CREATE TABLE IF NOT EXISTS live_rooms (
+			room_id           BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+			seller_id         VARCHAR(255) NOT NULL,
+			title             VARCHAR(255) NOT NULL,
+			status            VARCHAR(20) NOT NULL DEFAULT 'scheduled',
+			livekit_room_name VARCHAR(255),
+			viewer_count      INT NOT NULL DEFAULT 0,
+			created_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			INDEX idx_live_rooms_seller (seller_id),
+			INDEX idx_live_rooms_status (status)
+		)`},
+		{"live_products テーブル作成", `CREATE TABLE IF NOT EXISTS live_products (
+			id              BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+			room_id         BIGINT UNSIGNED NOT NULL,
+			product_id      BIGINT UNSIGNED NOT NULL,
+			position        INT NOT NULL DEFAULT 0,
+			mode            VARCHAR(20) NOT NULL DEFAULT 'instant',
+			start_price     INT NOT NULL DEFAULT 0,
+			instant_price   INT,
+			current_price   INT NOT NULL DEFAULT 0,
+			current_bidder  VARCHAR(255),
+			auction_end_at  TIMESTAMP NULL DEFAULT NULL,
+			status          VARCHAR(20) NOT NULL DEFAULT 'waiting',
+			buyer_id        VARCHAR(255),
+			INDEX idx_live_products_room (room_id),
+			INDEX idx_live_products_status (room_id, status)
+		)`},
+		{"live_comments テーブル作成", `CREATE TABLE IF NOT EXISTS live_comments (
+			id         BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+			room_id    BIGINT UNSIGNED NOT NULL,
+			user_id    VARCHAR(255) NOT NULL,
+			content    TEXT NOT NULL,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			INDEX idx_live_comments_room (room_id)
+		)`},
 	}
 
 	for _, s := range statements {
