@@ -187,13 +187,43 @@ func (d *LiveDao) PlaceBid(roomId int64, bidderId string, amount int) (*model.Li
 	return d.GetCurrentProduct(roomId)
 }
 
+// SkipProduct: 入札なしで終了したオークション商品をスキップにする
+// 入札者がいる場合（current_bidder != ''）は ErrConflict を返す
+func (d *LiveDao) SkipProduct(liveProductId int64) error {
+	res, err := d.DB.Exec(`
+		UPDATE live_products SET status='skipped'
+		WHERE id=? AND status='active'
+		  AND (current_bidder='' OR current_bidder IS NULL)`, liveProductId)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrConflict // 入札者がいるか既に処理済み
+	}
+	return nil
+}
+
+// AutoEndRoom: キュー終了時にルームを自動終了（配信者権限チェックなし）
+func (d *LiveDao) AutoEndRoom(roomId int64) error {
+	_, err := d.DB.Exec("UPDATE live_rooms SET status='ended' WHERE room_id=? AND status='live'", roomId)
+	return err
+}
+
 // SoldByAuction: オークション落札（タイマー満了時にコントローラから呼ぶ）
+// 入札者がいない場合は ErrConflict を返す
 func (d *LiveDao) SoldByAuction(liveProductId int64) (*model.LiveProduct, error) {
-	// 現在の最高入札者を落札者に設定
-	_, err := d.DB.Exec(`
+	// 入札者がいる場合のみ落札処理
+	res, err := d.DB.Exec(`
 		UPDATE live_products
 		SET status='sold', buyer_id=current_bidder
-		WHERE id=? AND status='active'`, liveProductId)
+		WHERE id=? AND status='active'
+		  AND current_bidder != '' AND current_bidder IS NOT NULL`, liveProductId)
+	if err != nil {
+		return nil, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return nil, ErrConflict // 入札者なし or 既に処理済み
+	}
 	if err != nil {
 		return nil, err
 	}

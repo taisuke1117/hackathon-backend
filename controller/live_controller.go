@@ -134,11 +134,23 @@ func (h *liveHub) stopTimer(roomId int64) {
 	s.timerMu.Unlock()
 }
 
-// onAuctionExpired: タイマー満了 → 落札処理 → 次の商品へ
+// onAuctionExpired: タイマー満了 → 入札あり=落札 / 入札なし=スキップ → 次の商品へ
 func (ctrl *LiveController) onAuctionExpired(roomId int64, liveProductId int64) {
+	// まずスキップを試みる（入札者なし判定）
+	if err := ctrl.dao.SkipProduct(liveProductId); err == nil {
+		// 入札なしでスキップ
+		ctrl.hub.broadcast(roomId, model.LiveEvent{Type: "skipped"})
+		time.Sleep(2 * time.Second)
+		ctrl.advanceToNext(roomId)
+		return
+	}
+
+	// スキップ失敗 = 入札者がいた → 落札処理
 	sold, err := ctrl.dao.SoldByAuction(liveProductId)
 	if err != nil {
-		log.Printf("live: auction expired but sold failed: %v", err)
+		log.Printf("live: sold failed after auction: %v", err)
+		// 落札もスキップも失敗 = 既に他の処理で完了済み
+		ctrl.advanceToNext(roomId)
 		return
 	}
 
@@ -150,7 +162,6 @@ func (ctrl *LiveController) onAuctionExpired(roomId int64, liveProductId int64) 
 		BuyerName:  buyerName,
 	})
 
-	// 少し待ってから次の商品へ
 	time.Sleep(3 * time.Second)
 	ctrl.advanceToNext(roomId)
 }
@@ -163,14 +174,16 @@ func (ctrl *LiveController) advanceToNext(roomId int64) {
 		return
 	}
 	if next == nil {
-		// キュー終了 → 配信終了
+		// キュー終了 → DBをendedに更新してから通知
+		if err := ctrl.dao.AutoEndRoom(roomId); err != nil {
+			log.Printf("live: auto end room failed: %v", err)
+		}
 		ctrl.hub.broadcast(roomId, model.LiveEvent{Type: "end"})
 		return
 	}
 
 	ctrl.hub.broadcast(roomId, model.LiveEvent{Type: "next", Product: next})
 
-	// オークション商品ならタイマーを再スタート
 	if next.Mode == "auction" {
 		ctrl.hub.startAuctionTimer(ctrl, roomId, next.Id)
 	}
@@ -350,6 +363,8 @@ func (c *LiveController) InstantBuy(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "無効なルームIDです")
 		return
 	}
+
+	c.hub.stopTimer(roomId) // オークションタイマーが走っていれば止める
 
 	sold, err := c.dao.InstantBuy(roomId, uid)
 	if err != nil {
