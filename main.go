@@ -115,10 +115,19 @@ func runMigrations(database *sql.DB) {
 			INDEX idx_reviews_reviewee (reviewee_id)
 		)`},
 		// 以下は既存テーブルへのカラム追加・データ修正
+		// ── productsテーブルへのカラム追加 ──
 		{"products.tags カラム追加", `ALTER TABLE products ADD COLUMN tags TEXT`},
 		{"products.condition カラム追加", `ALTER TABLE products ADD COLUMN condition VARCHAR(50)`},
+		{"products.image_url カラム追加", `ALTER TABLE products ADD COLUMN image_url TEXT`},
+		{"products.buyer_id カラム追加", `ALTER TABLE products ADD COLUMN buyer_id VARCHAR(255) DEFAULT NULL`},
+		{"products.likes_count カラム追加", `ALTER TABLE products ADD COLUMN likes_count INT NOT NULL DEFAULT 0`},
+		{"products.views_count カラム追加", `ALTER TABLE products ADD COLUMN views_count INT NOT NULL DEFAULT 0`},
+		{"products.category_id カラム追加", `ALTER TABLE products ADD COLUMN category_id BIGINT UNSIGNED DEFAULT NULL`},
+		{"products.updated_at カラム追加", `ALTER TABLE products ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP`},
 		{"products.status デフォルトを英語化", `ALTER TABLE products ALTER COLUMN status SET DEFAULT 'available'`},
-		// 日本語だったステータス値を英語に統一（既存データの移行）
+		// ── product_imagesテーブルへのカラム追加 ──
+		{"product_images.position カラム追加", `ALTER TABLE product_images ADD COLUMN position INT NOT NULL DEFAULT 0`},
+		// ── 日本語だったステータス値を英語に統一（既存データの移行） ──
 		{"既存statusを英語化(出品中)", `UPDATE products SET status='available' WHERE status='出品中'`},
 		{"既存statusを英語化(未発送)", `UPDATE products SET status='unshipped' WHERE status IN ('未発送','購入済み')`},
 		{"既存statusを英語化(発送済み)", `UPDATE products SET status='shipped' WHERE status IN ('発送済み','発送済')`},
