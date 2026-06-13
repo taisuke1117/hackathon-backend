@@ -262,10 +262,13 @@ func (c *LiveController) StartRoom(w http.ResponseWriter, r *http.Request) {
 		token = ""
 	}
 
-	// 最初の商品のオークションタイマーを開始
+	// 最初の商品を既に接続済みの視聴者へ通知 + タイマー開始
 	first, err := c.dao.GetCurrentProduct(roomId)
-	if err == nil && first != nil && first.Mode == "auction" {
-		c.hub.startAuctionTimer(c, roomId, first.Id)
+	if err == nil && first != nil {
+		c.hub.broadcast(roomId, model.LiveEvent{Type: "next", Product: first})
+		if first.Mode == "auction" {
+			c.hub.startAuctionTimer(c, roomId, first.Id)
+		}
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
