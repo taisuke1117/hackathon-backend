@@ -243,7 +243,12 @@ func (d *LiveDao) SoldByAuction(liveProductId int64) (*model.LiveProduct, error)
 	if !rows.Next() {
 		return nil, ErrNotFound
 	}
-	return scanLiveProduct(rows)
+	sold, err := scanLiveProduct(rows)
+	if err != nil {
+		return nil, err
+	}
+	_ = d.markLiveProductSold(liveProductId, sold.BuyerId, sold.CurrentPrice)
+	return sold, nil
 }
 
 // InstantBuy: 即決購入
@@ -276,7 +281,12 @@ func (d *LiveDao) InstantBuy(roomId int64, buyerId string) (*model.LiveProduct, 
 	if !rows.Next() {
 		return nil, ErrNotFound
 	}
-	return scanLiveProduct(rows)
+	sold, err := scanLiveProduct(rows)
+	if err != nil {
+		return nil, err
+	}
+	_ = d.markLiveProductSold(sold.Id, buyerId, sold.CurrentPrice)
+	return sold, nil
 }
 
 // AdvanceQueue: 次の商品をアクティブにする。次がなければ nil を返す
@@ -304,6 +314,30 @@ func (d *LiveDao) GetBidderName(userId string) string {
 	var name string
 	_ = d.DB.QueryRow("SELECT name FROM users WHERE user_id = ?", userId).Scan(&name)
 	return name
+}
+
+// markLiveProductSold: ライブ落札後に通常のproductsテーブルも更新する
+// これにより「購入した商品」「未発送」リストに反映される
+func (d *LiveDao) markLiveProductSold(liveProductId int64, buyerId string, price int) error {
+	var productId int64
+	var sellerId string
+	err := d.DB.QueryRow(`
+		SELECT lp.product_id, lr.seller_id
+		FROM live_products lp
+		JOIN live_rooms lr ON lr.room_id = lp.room_id
+		WHERE lp.id = ?`, liveProductId).Scan(&productId, &sellerId)
+	if err != nil {
+		return err
+	}
+	if _, err := d.DB.Exec(
+		"UPDATE products SET buyer_id=?, status='unshipped', price=? WHERE product_id=?",
+		buyerId, price, productId); err != nil {
+		return err
+	}
+	_, err = d.DB.Exec(
+		"UPDATE users SET total_sales = total_sales + ? WHERE user_id=?",
+		price, sellerId)
+	return err
 }
 
 // ── 内部ヘルパー ─────────────────────────────────────────────────
