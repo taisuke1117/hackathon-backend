@@ -34,7 +34,7 @@ func handleDaoError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, "購入した商品のみ評価できます")
 	default:
 		log.Printf("internal error: %v", err)
-		writeError(w, http.StatusInternalServerError, "サーバーエラーが発生しました")
+		writeError(w, http.StatusInternalServerError, err.Error()) // DEBUG
 	}
 }
 
