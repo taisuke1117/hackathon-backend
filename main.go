@@ -117,7 +117,7 @@ func runMigrations(database *sql.DB) {
 		// 以下は既存テーブルへのカラム追加・データ修正
 		// ── productsテーブルへのカラム追加 ──
 		{"products.tags カラム追加", `ALTER TABLE products ADD COLUMN tags TEXT`},
-		{"products.condition カラム追加", `ALTER TABLE products ADD COLUMN condition VARCHAR(50)`},
+		{"products.condition カラム追加", "ALTER TABLE products ADD COLUMN `condition` VARCHAR(50)"},
 		{"products.image_url カラム追加", `ALTER TABLE products ADD COLUMN image_url TEXT`},
 		{"products.buyer_id カラム追加", `ALTER TABLE products ADD COLUMN buyer_id VARCHAR(255) DEFAULT NULL`},
 		{"products.likes_count カラム追加", `ALTER TABLE products ADD COLUMN likes_count INT NOT NULL DEFAULT 0`},
