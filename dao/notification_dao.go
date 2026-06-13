@@ -16,16 +16,16 @@ func NewNotificationDao(db *sql.DB) *NotificationDao {
 // Create 通知を作成（購入・発送・値引きなどのイベント時にサーバー側から呼ぶ）
 func (d *NotificationDao) Create(userId, notifType, title, content, linkUrl string) error {
 	_, err := d.DB.Exec(
-		"INSERT INTO notifications (user_id, type, title, content, link_url) VALUES (?, ?, ?, ?, ?)",
+		"INSERT INTO notifications (user_id, `type`, title, content, link_url) VALUES (?, ?, ?, ?, ?)",
 		userId, notifType, title, content, linkUrl)
 	return err
 }
 
 // ListByUser ユーザー宛ての通知一覧（最新順）
 func (d *NotificationDao) ListByUser(userId string) ([]model.Notification, error) {
-	rows, err := d.DB.Query(`
-		SELECT notification_id, user_id, type, title, content, COALESCE(link_url, ''), is_read, created_at
-		FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 100`, userId)
+	rows, err := d.DB.Query(
+		"SELECT notification_id, user_id, `type`, title, content, COALESCE(link_url, ''), is_read, created_at"+
+			" FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 100", userId)
 	if err != nil {
 		return nil, err
 	}
