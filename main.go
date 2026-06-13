@@ -94,27 +94,75 @@ func runMigrations(database *sql.DB) {
 		{"product_images テーブル作成", `CREATE TABLE IF NOT EXISTS product_images (
 			image_id   BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
 			product_id BIGINT UNSIGNED NOT NULL,
-			position   INT NOT NULL DEFAULT 0,       -- 画像の表示順（0が先頭）
+			position   INT NOT NULL DEFAULT 0,
 			url        TEXT NOT NULL,
 			INDEX idx_product_images_product (product_id)
 		)`},
 		{"product_categories テーブル作成", `CREATE TABLE IF NOT EXISTS product_categories (
 			product_id  BIGINT UNSIGNED NOT NULL,
 			category_id BIGINT UNSIGNED NOT NULL,
-			PRIMARY KEY (product_id, category_id)   -- 複合主キーで重複防止
+			PRIMARY KEY (product_id, category_id)
 		)`},
 		{"reviews テーブル作成", `CREATE TABLE IF NOT EXISTS reviews (
 			review_id   BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
 			product_id  BIGINT UNSIGNED NOT NULL,
-			reviewer_id VARCHAR(255) NOT NULL,       -- 評価した人（購入者）
-			reviewee_id VARCHAR(255) NOT NULL,       -- 評価された人（出品者）
-			rating      INT NOT NULL,                -- 1〜5
+			reviewer_id VARCHAR(255) NOT NULL,
+			reviewee_id VARCHAR(255) NOT NULL,
+			rating      INT NOT NULL,
 			comment     TEXT,
 			created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			UNIQUE KEY uniq_reviews_product_reviewer (product_id, reviewer_id), -- 1取引1回のみ
+			UNIQUE KEY uniq_reviews_product_reviewer (product_id, reviewer_id),
 			INDEX idx_reviews_reviewee (reviewee_id)
 		)`},
+		{"likes テーブル作成", `CREATE TABLE IF NOT EXISTS likes (
+			user_id    VARCHAR(255) NOT NULL,
+			product_id BIGINT UNSIGNED NOT NULL,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (user_id, product_id)
+		)`},
+		{"chatrooms テーブル作成", `CREATE TABLE IF NOT EXISTS chatrooms (
+			chatroom_id       BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+			product_id        BIGINT UNSIGNED NOT NULL,
+			proposer_id       VARCHAR(255) NOT NULL,
+			discount_proposed INT NOT NULL DEFAULT 0,
+			discount_approved INT NOT NULL DEFAULT 0,
+			created_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			INDEX idx_chatrooms_product (product_id),
+			INDEX idx_chatrooms_proposer (proposer_id)
+		)`},
+		{"chats テーブル作成", `CREATE TABLE IF NOT EXISTS chats (
+			chat_id     BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+			chatroom_id BIGINT UNSIGNED NOT NULL,
+			sender_id   VARCHAR(255) NOT NULL,
+			content     TEXT NOT NULL,
+			is_read     TINYINT(1) NOT NULL DEFAULT 0,
+			created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			INDEX idx_chats_room (chatroom_id)
+		)`},
+		{"notifications テーブル作成", `CREATE TABLE IF NOT EXISTS notifications (
+			notification_id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+			user_id         VARCHAR(255) NOT NULL,
+			` + "`type`" + ` VARCHAR(50) NOT NULL,
+			title           VARCHAR(255) NOT NULL,
+			content         TEXT NOT NULL,
+			link_url        TEXT,
+			is_read         TINYINT(1) NOT NULL DEFAULT 0,
+			created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			INDEX idx_notifications_user (user_id)
+		)`},
+		{"blocks テーブル作成", `CREATE TABLE IF NOT EXISTS blocks (
+			blocker_id VARCHAR(255) NOT NULL,
+			blocked_id VARCHAR(255) NOT NULL,
+			PRIMARY KEY (blocker_id, blocked_id)
+		)`},
 		// 以下は既存テーブルへのカラム追加・データ修正
+		// ── usersテーブルへのカラム追加 ──
+		{"users.icon_url カラム追加", `ALTER TABLE users ADD COLUMN icon_url TEXT`},
+		{"users.place カラム追加", `ALTER TABLE users ADD COLUMN place VARCHAR(255)`},
+		{"users.bio カラム追加", `ALTER TABLE users ADD COLUMN bio TEXT`},
+		{"users.shipping_address カラム追加", `ALTER TABLE users ADD COLUMN shipping_address TEXT`},
+		{"users.total_sales カラム追加", `ALTER TABLE users ADD COLUMN total_sales INT NOT NULL DEFAULT 0`},
+		{"users.mail カラム追加", `ALTER TABLE users ADD COLUMN mail VARCHAR(255)`},
 		// ── productsテーブルへのカラム追加 ──
 		{"products.tags カラム追加", `ALTER TABLE products ADD COLUMN tags TEXT`},
 		{"products.condition カラム追加", "ALTER TABLE products ADD COLUMN `condition` VARCHAR(50)"},
