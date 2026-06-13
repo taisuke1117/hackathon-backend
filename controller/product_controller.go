@@ -10,13 +10,13 @@ import (
 )
 
 type ProductController struct {
-	productDao      *dao.ProductDao
-	notificationDao *dao.NotificationDao
-	reviewDao       *dao.ReviewDao
-	userDao         *dao.UserDao
+	productDao      dao.IProductDao
+	notificationDao dao.INotificationDao
+	reviewDao       dao.IReviewDao
+	userDao         dao.IUserDao
 }
 
-func NewProductController(productDao *dao.ProductDao, notificationDao *dao.NotificationDao, reviewDao *dao.ReviewDao, userDao *dao.UserDao) *ProductController {
+func NewProductController(productDao dao.IProductDao, notificationDao dao.INotificationDao, reviewDao dao.IReviewDao, userDao dao.IUserDao) *ProductController {
 	return &ProductController{productDao: productDao, notificationDao: notificationDao, reviewDao: reviewDao, userDao: userDao}
 }
 

@@ -15,26 +15,60 @@ import (
 	"github.com/go-sql-driver/mysql"
 )
 
+// ─────────────────────────────────────────────────────────
+// main.go: アプリのエントリーポイント
+//
+// やること:
+//  1. DBに接続
+//  2. マイグレーション実行（テーブル追加・カラム追加など）
+//  3. DAO（DB操作層）を生成
+//  4. Controller（HTTPハンドラ層）を生成（DAOを注入）
+//  5. ルーターをセットアップしてHTTPサーバー起動
+//
+// 依存関係の方向（DIの構造）:
+//   main → Controller → DAO → DB
+//   各層は下の層だけに依存し、上の層を知らない（疎結合）
+// ─────────────────────────────────────────────────────────
+
 func main() {
+	// ── DBに接続 ─────────────────────────────────────────────
+	// db.Connect() は環境変数からDSNを組み立ててMySQL接続を返す
 	database := db.Connect()
+	// defer: main()が終了するときにDBを閉じる（OS側のコネクション解放）
 	defer closeDBWithSysCall(database)
 
+	// ── マイグレーション ─────────────────────────────────────
+	// サーバー起動のたびに必要なテーブル・カラムがなければ作成する
+	// CREATE TABLE IF NOT EXISTS / ALTER TABLE など冪等な処理のみ
 	runMigrations(database)
 
+	// ── DAOの生成 ────────────────────────────────────────────
+	// DAO: Data Access Object。SQLを実行する層。*sql.DB を持つ。
+	// それぞれのエンティティ（user/product/chat...）ごとにDAOを作る
 	userDao := dao.NewUserDao(database)
 	productDao := dao.NewProductDao(database)
 	chatDao := dao.NewChatDao(database)
 	notificationDao := dao.NewNotificationDao(database)
 	reviewDao := dao.NewReviewDao(database)
 
-	userCtrl := controller.NewUserController(userDao, productDao, reviewDao)
+	// ── Controllerの生成（DAOを注入） ────────────────────────
+	// Controller: HTTPリクエストを受け取り、DAOを呼んでレスポンスを返す層
+	// 依存するDAOをコンストラクタで受け取る（依存性の注入 = DI）
+	// こうすることでControllerはSQLを直接書かず、テストも差し替えやすい
+	userCtrl := controller.NewUserController(userDao, productDao, reviewDao, notificationDao)
 	productCtrl := controller.NewProductController(productDao, notificationDao, reviewDao, userDao)
 	chatCtrl := controller.NewChatController(chatDao, notificationDao)
 	notificationCtrl := controller.NewNotificationController(notificationDao)
 	geminiCtrl := controller.NewGeminiController(userDao)
 
+	// ── ルーターのセットアップ ───────────────────────────────
+	// 全エンドポイントを登録してHTTPハンドラを返す
+	// 認証ミドルウェア・CORSミドルウェアもここで組み込まれる
 	handler := router.Setup(userCtrl, productCtrl, chatCtrl, notificationCtrl, geminiCtrl)
 
+	// ── HTTPサーバー起動 ─────────────────────────────────────
+	// Cloud Run は PORT 環境変数でポートを指定してくる
+	// ローカルでは PORT が未設定なので 8080 をデフォルトにする
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
@@ -45,7 +79,14 @@ func main() {
 	}
 }
 
+// runMigrations: サーバー起動時に必要なDB変更を適用する
+//
+// 設計方針:
+//  - 全て冪等（何度実行しても同じ結果）
+//  - CREATE TABLE IF NOT EXISTS や ALTER TABLE（エラーを無視）を使う
+//  - 本番のマイグレーションツール（goose等）の代わりに簡易実装
 func runMigrations(database *sql.DB) {
+	// 実行するSQL文と説明のセット。上から順に実行される。
 	statements := []struct {
 		desc string
 		sql  string
@@ -53,29 +94,31 @@ func runMigrations(database *sql.DB) {
 		{"product_images テーブル作成", `CREATE TABLE IF NOT EXISTS product_images (
 			image_id   BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
 			product_id BIGINT UNSIGNED NOT NULL,
-			position   INT NOT NULL DEFAULT 0,
+			position   INT NOT NULL DEFAULT 0,       -- 画像の表示順（0が先頭）
 			url        TEXT NOT NULL,
 			INDEX idx_product_images_product (product_id)
 		)`},
 		{"product_categories テーブル作成", `CREATE TABLE IF NOT EXISTS product_categories (
 			product_id  BIGINT UNSIGNED NOT NULL,
 			category_id BIGINT UNSIGNED NOT NULL,
-			PRIMARY KEY (product_id, category_id)
+			PRIMARY KEY (product_id, category_id)   -- 複合主キーで重複防止
 		)`},
 		{"reviews テーブル作成", `CREATE TABLE IF NOT EXISTS reviews (
 			review_id   BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
 			product_id  BIGINT UNSIGNED NOT NULL,
-			reviewer_id VARCHAR(255) NOT NULL,
-			reviewee_id VARCHAR(255) NOT NULL,
-			rating      INT NOT NULL,
+			reviewer_id VARCHAR(255) NOT NULL,       -- 評価した人（購入者）
+			reviewee_id VARCHAR(255) NOT NULL,       -- 評価された人（出品者）
+			rating      INT NOT NULL,                -- 1〜5
 			comment     TEXT,
 			created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			UNIQUE KEY uniq_reviews_product_reviewer (product_id, reviewer_id),
+			UNIQUE KEY uniq_reviews_product_reviewer (product_id, reviewer_id), -- 1取引1回のみ
 			INDEX idx_reviews_reviewee (reviewee_id)
 		)`},
+		// 以下は既存テーブルへのカラム追加・データ修正
 		{"products.tags カラム追加", `ALTER TABLE products ADD COLUMN tags TEXT`},
 		{"products.condition カラム追加", `ALTER TABLE products ADD COLUMN condition VARCHAR(50)`},
 		{"products.status デフォルトを英語化", `ALTER TABLE products ALTER COLUMN status SET DEFAULT 'available'`},
+		// 日本語だったステータス値を英語に統一（既存データの移行）
 		{"既存statusを英語化(出品中)", `UPDATE products SET status='available' WHERE status='出品中'`},
 		{"既存statusを英語化(未発送)", `UPDATE products SET status='unshipped' WHERE status IN ('未発送','購入済み')`},
 		{"既存statusを英語化(発送済み)", `UPDATE products SET status='shipped' WHERE status IN ('発送済み','発送済')`},
@@ -84,15 +127,28 @@ func runMigrations(database *sql.DB) {
 
 	for _, s := range statements {
 		if _, err := database.Exec(s.sql); err != nil {
-			if me, ok := err.(*mysql.MySQLError); ok && me.Number == 1060 {
-				log.Printf("migrate: skip (already applied) — %s", s.desc)
-				continue
+			if me, ok := err.(*mysql.MySQLError); ok {
+				switch me.Number {
+				case 1060: // Duplicate column name — ADD COLUMN済み
+					log.Printf("migrate: skip (already applied) — %s", s.desc)
+					continue
+				case 1061: // Duplicate key name — INDEX済み
+					log.Printf("migrate: skip (index exists) — %s", s.desc)
+					continue
+				case 3730, 1217: // FK制約でDROP TABLE不可 — 既に削除済みか制約あり
+					log.Printf("migrate: skip (fk constraint) — %s", s.desc)
+					continue
+				}
 			}
-			log.Fatalf("migrate: FAILED — %s: %v", s.desc, err)
+			// それ以外は警告ログだけ残してサーバーは起動させる
+			log.Printf("migrate: WARNING (skipped) — %s: %v", s.desc, err)
+		} else {
+			log.Printf("migrate: ok — %s", s.desc)
 		}
-		log.Printf("migrate: ok — %s", s.desc)
 	}
 
+	// ── カテゴリマスターの初期データ投入 ─────────────────────
+	// 起動のたびに実行されるが「存在しないものだけINSERT」なので冪等
 	categories := []string{
 		"レディース", "メンズ", "キッズ・ベビー", "アウター・ジャケット", "バッグ・財布",
 		"シューズ", "アクセサリー・ジュエリー", "家電・スマホ", "PC・タブレット", "カメラ・光学機器",
@@ -101,6 +157,7 @@ func runMigrations(database *sql.DB) {
 	}
 	added := 0
 	for _, name := range categories {
+		// サブクエリで「まだ存在しない場合だけINSERT」を実現（INSERT IF NOT EXISTS の代替）
 		res, err := database.Exec(
 			"INSERT INTO categories (name) SELECT ? FROM dual WHERE NOT EXISTS (SELECT 1 FROM categories WHERE name = ?)",
 			name, name)
@@ -117,11 +174,16 @@ func runMigrations(database *sql.DB) {
 	log.Println("migrate: 完了")
 }
 
+// closeDBWithSysCall: SIGTERMまたはSIGINT（Ctrl+C）を受け取ったときにDBを閉じて終了する
+//
+// Cloud RunはデプロイのときにSIGTERMを送ってコンテナを停止する。
+// このゴルーチンがそれを受け取ってDBコネクションを正常にクローズする（グレースフルシャットダウン）。
 func closeDBWithSysCall(database *sql.DB) {
 	sig := make(chan os.Signal, 1)
+	// SIGTERMとSIGINTを監視するよう登録
 	signal.Notify(sig, syscall.SIGTERM, syscall.SIGINT)
 	go func() {
-		s := <-sig
+		s := <-sig // シグナルが来るまでここでブロック
 		log.Printf("received syscall: %v", s)
 		if err := database.Close(); err != nil {
 			log.Fatal(err)

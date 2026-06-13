@@ -9,13 +9,14 @@ import (
 )
 
 type UserController struct {
-	userDao    *dao.UserDao
-	productDao *dao.ProductDao
-	reviewDao  *dao.ReviewDao
+	userDao         dao.IUserDao
+	productDao      dao.IProductDao
+	reviewDao       dao.IReviewDao
+	notificationDao dao.INotificationDao
 }
 
-func NewUserController(userDao *dao.UserDao, productDao *dao.ProductDao, reviewDao *dao.ReviewDao) *UserController {
-	return &UserController{userDao: userDao, productDao: productDao, reviewDao: reviewDao}
+func NewUserController(userDao dao.IUserDao, productDao dao.IProductDao, reviewDao dao.IReviewDao, notificationDao dao.INotificationDao) *UserController {
+	return &UserController{userDao: userDao, productDao: productDao, reviewDao: reviewDao, notificationDao: notificationDao}
 }
 
 // Register POST /api/users — 初回ログイン時のユーザー登録（再ログイン時は名前を同期）
@@ -160,8 +161,7 @@ func (c *UserController) Init(w http.ResponseWriter, r *http.Request) {
 		handleDaoError(w, err)
 		return
 	}
-	notificationDao := dao.NewNotificationDao(c.userDao.DB)
-	notifications, err := notificationDao.ListByUser(uid)
+	notifications, err := c.notificationDao.ListByUser(uid)
 	if err != nil {
 		handleDaoError(w, err)
 		return
