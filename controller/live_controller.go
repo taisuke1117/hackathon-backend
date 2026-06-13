@@ -167,6 +167,7 @@ func (ctrl *LiveController) onAuctionExpired(roomId int64, liveProductId int64) 
 }
 
 // advanceToNext: 次の商品をアクティブにしてブロードキャスト
+// キューが空になっても自動終了しない（配信者が手動で終了する）
 func (ctrl *LiveController) advanceToNext(roomId int64) {
 	next, err := ctrl.dao.AdvanceQueue(roomId)
 	if err != nil {
@@ -174,11 +175,8 @@ func (ctrl *LiveController) advanceToNext(roomId int64) {
 		return
 	}
 	if next == nil {
-		// キュー終了 → DBをendedに更新してから通知
-		if err := ctrl.dao.AutoEndRoom(roomId); err != nil {
-			log.Printf("live: auto end room failed: %v", err)
-		}
-		ctrl.hub.broadcast(roomId, model.LiveEvent{Type: "end"})
+		// キュー終了 → 配信者に委ねる（自動終了しない）
+		ctrl.hub.broadcast(roomId, model.LiveEvent{Type: "queue_empty"})
 		return
 	}
 
