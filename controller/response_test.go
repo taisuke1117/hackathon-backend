@@ -71,3 +71,38 @@ func TestWriteError(t *testing.T) {
 		t.Errorf("error message = %q, want テストエラー", body["error"])
 	}
 }
+
+func TestPathId(t *testing.T) {
+	cases := []struct {
+		raw    string
+		wantId int64
+		wantOk bool
+	}{
+		{"123", 123, true},
+		{"1", 1, true},
+		{"0", 0, false},   // 0は無効
+		{"-1", 0, false},  // 負数は無効
+		{"abc", 0, false}, // 非数値は無効
+		{"", 0, false},
+		{"99999999999999999999", 0, false}, // オーバーフロー
+	}
+
+	for _, tc := range cases {
+		mux := http.NewServeMux()
+		var gotId int64
+		var gotOk bool
+		mux.HandleFunc("GET /items/{id}", func(w http.ResponseWriter, r *http.Request) {
+			gotId, gotOk = pathId(r, "id")
+		})
+		req := httptest.NewRequest("GET", "/items/"+tc.raw, nil)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+
+		if gotOk != tc.wantOk {
+			t.Errorf("pathId(%q): ok=%v, want %v", tc.raw, gotOk, tc.wantOk)
+		}
+		if gotOk && gotId != tc.wantId {
+			t.Errorf("pathId(%q): id=%d, want %d", tc.raw, gotId, tc.wantId)
+		}
+	}
+}

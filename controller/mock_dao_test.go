@@ -99,6 +99,6 @@ func (m *mockUserDao) Block(blockerId, blockedId string) error {
 	}
 	return nil
 }
-func (m *mockUserDao) GetBadges(_ string) (int, int, error)               { return 0, 0, nil }
+func (m *mockUserDao) GetBadges(_ string) (int, int, int, error)          { return 0, 0, 0, nil }
 func (m *mockUserDao) GetAllCategories() ([]model.Category, error)        { return nil, nil }
 func (m *mockUserDao) GetLikedProductIds(_ string) ([]int64, error)       { return nil, nil }
