@@ -1,0 +1,21 @@
+# 秘密鍵・証明書（Cloud SQL接続用）
+*.pem
+*.key
+*.p12
+*.pfx
+
+# 環境変数
+.env
+.env.*
+
+# Claude関連
+.claude/
+
+# IDE
+.idea/
+.vscode/
+
+# Go
+*.exe
+*.test
+/tmp/
