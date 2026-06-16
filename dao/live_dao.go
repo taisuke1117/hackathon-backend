@@ -22,9 +22,14 @@ func (d *LiveDao) CreateRoom(sellerId string, req *model.CreateLiveRoomRequest) 
 	}
 	defer tx.Rollback()
 
+	timerSeconds := req.TimerSeconds
+	if timerSeconds <= 0 {
+		timerSeconds = 30
+	}
+
 	res, err := tx.Exec(
-		"INSERT INTO live_rooms (seller_id, title, status) VALUES (?, ?, 'scheduled')",
-		sellerId, req.Title)
+		"INSERT INTO live_rooms (seller_id, title, status, timer_seconds) VALUES (?, ?, 'scheduled', ?)",
+		sellerId, req.Title, timerSeconds)
 	if err != nil {
 		return 0, err
 	}
@@ -48,7 +53,7 @@ func (d *LiveDao) CreateRoom(sellerId string, req *model.CreateLiveRoomRequest) 
 func (d *LiveDao) ListRooms() ([]model.LiveRoom, error) {
 	rows, err := d.DB.Query(`
 		SELECT r.room_id, r.seller_id, COALESCE(u.name,''), COALESCE(u.icon_url,''),
-		       r.title, r.status, r.viewer_count, r.created_at
+		       r.title, r.status, r.viewer_count, r.timer_seconds, r.created_at
 		FROM live_rooms r
 		JOIN users u ON u.user_id = r.seller_id
 		WHERE r.status = 'live'
@@ -62,7 +67,7 @@ func (d *LiveDao) ListRooms() ([]model.LiveRoom, error) {
 	for rows.Next() {
 		var room model.LiveRoom
 		if err := rows.Scan(&room.RoomId, &room.SellerId, &room.SellerName, &room.SellerIcon,
-			&room.Title, &room.Status, &room.ViewerCount, &room.CreatedAt); err != nil {
+			&room.Title, &room.Status, &room.ViewerCount, &room.TimerSeconds, &room.CreatedAt); err != nil {
 			return nil, err
 		}
 		list = append(list, room)
@@ -75,12 +80,12 @@ func (d *LiveDao) FindRoom(roomId int64) (*model.LiveRoomDetail, error) {
 	var detail model.LiveRoomDetail
 	err := d.DB.QueryRow(`
 		SELECT r.room_id, r.seller_id, COALESCE(u.name,''), COALESCE(u.icon_url,''),
-		       r.title, r.status, r.viewer_count, r.created_at
+		       r.title, r.status, r.viewer_count, r.timer_seconds, r.created_at
 		FROM live_rooms r
 		JOIN users u ON u.user_id = r.seller_id
 		WHERE r.room_id = ?`, roomId).Scan(
 		&detail.RoomId, &detail.SellerId, &detail.SellerName, &detail.SellerIcon,
-		&detail.Title, &detail.Status, &detail.ViewerCount, &detail.CreatedAt)
+		&detail.Title, &detail.Status, &detail.ViewerCount, &detail.TimerSeconds, &detail.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, ErrNotFound
 	}
@@ -130,7 +135,7 @@ func (d *LiveDao) StartRoom(roomId int64, sellerId, livekitRoom string) error {
 	if n == 0 {
 		return ErrForbidden
 	}
-	// 最初の商品をアクティブにする
+	// 最初の商品をアクティブにする（auction_end_at は NULL のまま: 初入札まで起動しない）
 	return d.activateNextProduct(roomId)
 }
 
@@ -170,14 +175,16 @@ func (d *LiveDao) GetCurrentProduct(roomId int64) (*model.LiveProduct, error) {
 	return scanLiveProduct(rows)
 }
 
-// PlaceBid: 入札。現在価格を更新してタイマーを30秒リセット
+// PlaceBid: 入札。live_rooms.timer_seconds 秒後を auction_end_at にセット（初入札でタイマー起動）
 func (d *LiveDao) PlaceBid(roomId int64, bidderId string, amount int) (*model.LiveProduct, error) {
-	newEndAt := time.Now().Add(30 * time.Second)
 	res, err := d.DB.Exec(`
-		UPDATE live_products
-		SET current_price=?, current_bidder=?, auction_end_at=?
-		WHERE room_id=? AND status='active' AND mode='auction' AND ? > current_price`,
-		amount, bidderId, newEndAt, roomId, amount)
+		UPDATE live_products lp
+		JOIN live_rooms lr ON lr.room_id = lp.room_id
+		SET lp.current_price = ?,
+		    lp.current_bidder = ?,
+		    lp.auction_end_at = DATE_ADD(NOW(), INTERVAL lr.timer_seconds SECOND)
+		WHERE lp.room_id = ? AND lp.status = 'active' AND lp.mode = 'auction' AND ? > lp.current_price`,
+		amount, bidderId, roomId, amount)
 	if err != nil {
 		return nil, err
 	}
@@ -316,6 +323,58 @@ func (d *LiveDao) GetBidderName(userId string) string {
 	return name
 }
 
+// AddComment: ライブチャットにコメントを投稿する
+func (d *LiveDao) AddComment(roomId int64, userId, content string) (*model.LiveComment, error) {
+	res, err := d.DB.Exec(
+		"INSERT INTO live_comments (room_id, user_id, content) VALUES (?, ?, ?)",
+		roomId, userId, content)
+	if err != nil {
+		return nil, err
+	}
+	id, _ := res.LastInsertId()
+
+	var c model.LiveComment
+	err = d.DB.QueryRow(`
+		SELECT lc.id, lc.room_id, lc.user_id, COALESCE(u.name,''), COALESCE(u.icon_url,''),
+		       lc.content, lc.created_at
+		FROM live_comments lc
+		JOIN users u ON u.user_id = lc.user_id
+		WHERE lc.id = ?`, id).Scan(
+		&c.Id, &c.RoomId, &c.UserId, &c.UserName, &c.UserIcon,
+		&c.Content, &c.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
+// ListComments: ライブチャットのコメント一覧（直近 limit 件、昇順）
+func (d *LiveDao) ListComments(roomId int64, limit int) ([]model.LiveComment, error) {
+	rows, err := d.DB.Query(`
+		SELECT lc.id, lc.room_id, lc.user_id, COALESCE(u.name,''), COALESCE(u.icon_url,''),
+		       lc.content, lc.created_at
+		FROM live_comments lc
+		JOIN users u ON u.user_id = lc.user_id
+		WHERE lc.room_id = ?
+		ORDER BY lc.created_at ASC
+		LIMIT ?`, roomId, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	comments := make([]model.LiveComment, 0)
+	for rows.Next() {
+		var c model.LiveComment
+		if err := rows.Scan(&c.Id, &c.RoomId, &c.UserId, &c.UserName, &c.UserIcon,
+			&c.Content, &c.CreatedAt); err != nil {
+			return nil, err
+		}
+		comments = append(comments, c)
+	}
+	return comments, rows.Err()
+}
+
 // markLiveProductSold: ライブ落札後に通常のproductsテーブルも更新する
 // これにより「購入した商品」「未発送」リストに反映される
 func (d *LiveDao) markLiveProductSold(liveProductId int64, buyerId string, price int) error {
@@ -342,8 +401,9 @@ func (d *LiveDao) markLiveProductSold(liveProductId int64, buyerId string, price
 
 // ── 内部ヘルパー ─────────────────────────────────────────────────
 
+// activateNextProduct: 次の waiting 商品をアクティブにする
+// auction_end_at は NULL のまま（初入札でタイマーが起動されるまでカウントしない）
 func (d *LiveDao) activateNextProduct(roomId int64) error {
-	// 次の waiting 商品の ID を取得
 	var nextId int64
 	err := d.DB.QueryRow(
 		"SELECT id FROM live_products WHERE room_id=? AND status='waiting' ORDER BY position LIMIT 1",
@@ -355,11 +415,10 @@ func (d *LiveDao) activateNextProduct(roomId int64) error {
 		return err
 	}
 
-	endAt := time.Now().Add(30 * time.Second)
 	_, err = d.DB.Exec(`
 		UPDATE live_products
-		SET status='active', current_price=start_price, auction_end_at=?
-		WHERE id=?`, endAt, nextId)
+		SET status='active', current_price=start_price, auction_end_at=NULL
+		WHERE id=?`, nextId)
 	return err
 }
 

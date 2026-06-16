@@ -80,6 +80,8 @@ func Setup(
 	mux.HandleFunc("POST /api/live/rooms/{id}/buy", liveCtrl.InstantBuy)          // 即決購入
 	mux.HandleFunc("POST /api/live/rooms/{id}/next", liveCtrl.Next)               // 次の商品へ
 	mux.HandleFunc("GET /api/live/rooms/{id}/events", liveCtrl.Subscribe)         // SSE接続
+	mux.HandleFunc("POST /api/live/rooms/{id}/comment", liveCtrl.PostComment)     // チャットコメント投稿
+	mux.HandleFunc("GET /api/live/rooms/{id}/comments", liveCtrl.GetComments)     // チャット過去ログ
 
 	// ── 画像アップロード ──────────────────────────────────────
 	// GCS（Google Cloud Storage）に画像を保存してURLを返す

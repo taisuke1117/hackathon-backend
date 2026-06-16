@@ -32,14 +32,15 @@ func NewLiveController(liveDao *dao.LiveDao) *LiveController {
 // ── SSEハブ（Server-Sent Events のブロードキャスト管理） ─────────
 
 type liveHub struct {
-	mu     sync.Mutex
-	rooms  map[int64]*roomState
+	mu    sync.Mutex
+	rooms map[int64]*roomState
 }
 
 type roomState struct {
-	clients map[chan []byte]struct{}
-	timer   *time.Timer // オークションのカウントダウンタイマー
-	timerMu sync.Mutex
+	clients      map[chan []byte]struct{}
+	timer        *time.Timer // オークションのカウントダウンタイマー
+	timerMu      sync.Mutex
+	timerSeconds int // live_rooms.timer_seconds から読み込み（配信開始時にセット）
 }
 
 func newLiveHub() *liveHub {
@@ -96,8 +97,9 @@ func (h *liveHub) broadcast(roomId int64, event model.LiveEvent) {
 	h.mu.Unlock()
 }
 
-// startAuctionTimer: 30秒カウントダウン。入札のたびにリセットされる。
+// startAuctionTimer: timerSeconds 秒のカウントダウン。入札のたびにリセットされる。
 // 満了したら自動的に落札処理を行いキューを進める。
+// ※ 配信開始・商品切替時には呼ばない（初入札の Bid ハンドラで初めて起動する）
 func (h *liveHub) startAuctionTimer(ctrl *LiveController, roomId int64, liveProductId int64) {
 	s := h.getOrCreate(roomId)
 	s.timerMu.Lock()
@@ -106,7 +108,13 @@ func (h *liveHub) startAuctionTimer(ctrl *LiveController, roomId int64, liveProd
 	if s.timer != nil {
 		s.timer.Stop()
 	}
-	s.timer = time.AfterFunc(30*time.Second, func() {
+
+	timerSeconds := s.timerSeconds
+	if timerSeconds <= 0 {
+		timerSeconds = 30
+	}
+
+	s.timer = time.AfterFunc(time.Duration(timerSeconds)*time.Second, func() {
 		ctrl.onAuctionExpired(roomId, liveProductId)
 	})
 }
@@ -162,7 +170,7 @@ func (ctrl *LiveController) onAuctionExpired(roomId int64, liveProductId int64) 
 }
 
 // advanceToNext: 次の商品をアクティブにしてブロードキャスト
-// キューが空になっても自動終了しない（配信者が手動で終了する）
+// タイマーはここでは起動しない（初入札 Bid ハンドラで起動する）
 func (ctrl *LiveController) advanceToNext(roomId int64) {
 	next, err := ctrl.dao.AdvanceQueue(roomId)
 	if err != nil {
@@ -176,10 +184,7 @@ func (ctrl *LiveController) advanceToNext(roomId int64) {
 	}
 
 	ctrl.hub.broadcast(roomId, model.LiveEvent{Type: "next", Product: next})
-
-	if next.Mode == "auction" {
-		ctrl.hub.startAuctionTimer(ctrl, roomId, next.Id)
-	}
+	// ここでは startAuctionTimer を呼ばない
 }
 
 // ── HTTPハンドラ ──────────────────────────────────────────────────
@@ -249,21 +254,29 @@ func (c *LiveController) StartRoom(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// timer_seconds を roomState にセット（以降の入札タイマーで使用）
+	if detail, err := c.dao.FindRoom(roomId); err == nil {
+		s := c.hub.getOrCreate(roomId)
+		s.timerMu.Lock()
+		if detail.TimerSeconds > 0 {
+			s.timerSeconds = detail.TimerSeconds
+		} else {
+			s.timerSeconds = 30
+		}
+		s.timerMu.Unlock()
+	}
+
 	// 配信者用トークン生成
 	token, err := generateLivekitToken(livekitRoom, uid, true)
 	if err != nil {
 		log.Printf("live: livekit token error: %v", err)
-		// トークン生成に失敗してもルームは開始済み（映像なしで続行）
 		token = ""
 	}
 
-	// 最初の商品を既に接続済みの視聴者へ通知 + タイマー開始
+	// 最初の商品を既に接続済みの視聴者へ通知（タイマーは起動しない）
 	first, err := c.dao.GetCurrentProduct(roomId)
 	if err == nil && first != nil {
 		c.hub.broadcast(roomId, model.LiveEvent{Type: "next", Product: first})
-		if first.Mode == "auction" {
-			c.hub.startAuctionTimer(c, roomId, first.Id)
-		}
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -337,7 +350,7 @@ func (c *LiveController) Bid(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// タイマーリセット
+	// 初入札 or 追い入札でタイマーをリセット（初回はここで初めて起動）
 	c.hub.resetTimer(c, roomId, updated.Id)
 
 	// 入札者名を取得してブロードキャスト
@@ -345,7 +358,7 @@ func (c *LiveController) Bid(w http.ResponseWriter, r *http.Request) {
 	c.hub.broadcast(roomId, model.LiveEvent{
 		Type:        "bid",
 		Product:     updated,
-		SecondsLeft: 30,
+		SecondsLeft: updated.SecondsLeft, // PlaceBid で timer_seconds 秒後にセットされた残り秒数
 	})
 
 	writeJSON(w, http.StatusOK, updated)
@@ -408,6 +421,52 @@ func (c *LiveController) Next(w http.ResponseWriter, r *http.Request) {
 	c.hub.stopTimer(roomId)
 	c.advanceToNext(roomId)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// POST /api/live/rooms/{id}/comment — ライブチャットにコメントを投稿
+func (c *LiveController) PostComment(w http.ResponseWriter, r *http.Request) {
+	uid := mid.UserId(r)
+	roomId, ok := pathId(r, "id")
+	if !ok {
+		writeError(w, http.StatusBadRequest, "無効なルームIDです")
+		return
+	}
+	var req struct {
+		Content string `json:"content"`
+	}
+	if !decodeBody(w, r, &req) {
+		return
+	}
+	if req.Content == "" {
+		writeError(w, http.StatusBadRequest, "コメントを入力してください")
+		return
+	}
+
+	comment, err := c.dao.AddComment(roomId, uid, req.Content)
+	if err != nil {
+		handleDaoError(w, err)
+		return
+	}
+	c.hub.broadcast(roomId, model.LiveEvent{
+		Type:    "comment",
+		Comment: comment,
+	})
+	writeJSON(w, http.StatusCreated, comment)
+}
+
+// GET /api/live/rooms/{id}/comments — ライブチャットの過去ログ取得（直近50件）
+func (c *LiveController) GetComments(w http.ResponseWriter, r *http.Request) {
+	roomId, ok := pathId(r, "id")
+	if !ok {
+		writeError(w, http.StatusBadRequest, "無効なルームIDです")
+		return
+	}
+	comments, err := c.dao.ListComments(roomId, 50)
+	if err != nil {
+		handleDaoError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, comments)
 }
 
 // GET /api/live/rooms/{id}/events — SSE（視聴者がここに接続してリアルタイム更新を受け取る）

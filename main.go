@@ -161,10 +161,12 @@ func runMigrations(database *sql.DB) {
 			status            VARCHAR(20) NOT NULL DEFAULT 'scheduled',
 			livekit_room_name VARCHAR(255),
 			viewer_count      INT NOT NULL DEFAULT 0,
+			timer_seconds     INT NOT NULL DEFAULT 30,
 			created_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			INDEX idx_live_rooms_seller (seller_id),
 			INDEX idx_live_rooms_status (status)
 		)`},
+		{"live_rooms.timer_seconds カラム追加", `ALTER TABLE live_rooms ADD COLUMN timer_seconds INT NOT NULL DEFAULT 30`},
 		{"live_products テーブル作成", `CREATE TABLE IF NOT EXISTS live_products (
 			id              BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
 			room_id         BIGINT UNSIGNED NOT NULL,
