@@ -39,7 +39,7 @@ type IUserDao interface {
 	Upsert(userId string, req *model.RegisterUserRequest) error
 	Update(userId string, req *model.UpdateUserRequest) error
 	Block(blockerId, blockedId string) error
-	GetBadges(userId string) (int, int, error)
+	GetBadges(userId string) (int, int, int, error)
 	GetAllCategories() ([]model.Category, error)
 	GetLikedProductIds(userId string) ([]int64, error)
 }

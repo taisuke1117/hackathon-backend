@@ -15,36 +15,17 @@ import (
 	"github.com/go-sql-driver/mysql"
 )
 
-// ─────────────────────────────────────────────────────────
-// main.go: アプリのエントリーポイント
-//
-// やること:
-//  1. DBに接続
-//  2. マイグレーション実行（テーブル追加・カラム追加など）
-//  3. DAO（DB操作層）を生成
-//  4. Controller（HTTPハンドラ層）を生成（DAOを注入）
-//  5. ルーターをセットアップしてHTTPサーバー起動
-//
-// 依存関係の方向（DIの構造）:
-//   main → Controller → DAO → DB
-//   各層は下の層だけに依存し、上の層を知らない（疎結合）
-// ─────────────────────────────────────────────────────────
+// main: DB接続 → マイグレーション → DAO生成 → Controller生成（DI） → HTTP起動
 
 func main() {
-	// ── DBに接続 ─────────────────────────────────────────────
-	// db.Connect() は環境変数からDSNを組み立ててMySQL接続を返す
+	// ── DBに接続
 	database := db.Connect()
-	// defer: main()が終了するときにDBを閉じる（OS側のコネクション解放）
 	defer closeDBWithSysCall(database)
 
-	// ── マイグレーション ─────────────────────────────────────
-	// サーバー起動のたびに必要なテーブル・カラムがなければ作成する
-	// CREATE TABLE IF NOT EXISTS / ALTER TABLE など冪等な処理のみ
+	// ── マイグレーション
 	runMigrations(database)
 
-	// ── DAOの生成 ────────────────────────────────────────────
-	// DAO: Data Access Object。SQLを実行する層。*sql.DB を持つ。
-	// それぞれのエンティティ（user/product/chat...）ごとにDAOを作る
+	// ── DAOの生成
 	userDao := dao.NewUserDao(database)
 	productDao := dao.NewProductDao(database)
 	chatDao := dao.NewChatDao(database)
@@ -52,10 +33,7 @@ func main() {
 	reviewDao := dao.NewReviewDao(database)
 	liveDao := dao.NewLiveDao(database)
 
-	// ── Controllerの生成（DAOを注入） ────────────────────────
-	// Controller: HTTPリクエストを受け取り、DAOを呼んでレスポンスを返す層
-	// 依存するDAOをコンストラクタで受け取る（依存性の注入 = DI）
-	// こうすることでControllerはSQLを直接書かず、テストも差し替えやすい
+	// ── Controllerの生成（DAOを注入）
 	userCtrl := controller.NewUserController(userDao, productDao, reviewDao, notificationDao)
 	productCtrl := controller.NewProductController(productDao, notificationDao, reviewDao, userDao)
 	chatCtrl := controller.NewChatController(chatDao, notificationDao)
@@ -63,9 +41,7 @@ func main() {
 	geminiCtrl := controller.NewGeminiController(userDao)
 	liveCtrl := controller.NewLiveController(liveDao)
 
-	// ── ルーターのセットアップ ───────────────────────────────
-	// 全エンドポイントを登録してHTTPハンドラを返す
-	// 認証ミドルウェア・CORSミドルウェアもここで組み込まれる
+	// ── ルーターのセットアップ
 	handler := router.Setup(userCtrl, productCtrl, chatCtrl, notificationCtrl, geminiCtrl, liveCtrl)
 
 	// ── HTTPサーバー起動 ─────────────────────────────────────
@@ -81,14 +57,8 @@ func main() {
 	}
 }
 
-// runMigrations: サーバー起動時に必要なDB変更を適用する
-//
-// 設計方針:
-//  - 全て冪等（何度実行しても同じ結果）
-//  - CREATE TABLE IF NOT EXISTS や ALTER TABLE（エラーを無視）を使う
-//  - 本番のマイグレーションツール（goose等）の代わりに簡易実装
+// runMigrations: 冪等なDDL群をサーバー起動時に実行する（本番マイグレーションツールの代替）
 func runMigrations(database *sql.DB) {
-	// 実行するSQL文と説明のセット。上から順に実行される。
 	statements := []struct {
 		desc string
 		sql  string

@@ -131,9 +131,9 @@ func (c *UserController) Block(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "blocked"})
 }
 
-// Badges GET /api/me/badges — 未読の通知数・チャット数（ヘッダー/フッターのバッジ用）
+// Badges GET /api/me/badges — 未読の通知数・チャット数・未発送商品数（ヘッダー/フッターのバッジ用）
 func (c *UserController) Badges(w http.ResponseWriter, r *http.Request) {
-	notifications, chats, err := c.userDao.GetBadges(middleware.UserId(r))
+	notifications, chats, unshipped, err := c.userDao.GetBadges(middleware.UserId(r))
 	if err != nil {
 		handleDaoError(w, err)
 		return
@@ -141,6 +141,7 @@ func (c *UserController) Badges(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]int{
 		"unread_notifications": notifications,
 		"unread_chats":         chats,
+		"unshipped_products":   unshipped,
 	})
 }
 

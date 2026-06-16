@@ -89,9 +89,9 @@ func (d *UserDao) GetLikedProductIds(userId string) ([]int64, error) {
 	return ids, nil
 }
 
-// GetBadges 未読の通知数・チャット数を返す（ヘッダー/フッターのバッジ用）
-func (d *UserDao) GetBadges(userId string) (int, int, error) {
-	var notifications, chats int
+// GetBadges 未読の通知数・チャット数・未発送商品数を返す（ヘッダー/フッターのバッジ用）
+func (d *UserDao) GetBadges(userId string) (int, int, int, error) {
+	var notifications, chats, unshipped int
 	err := d.DB.QueryRow(`
 		SELECT
 		  (SELECT COUNT(*) FROM notifications WHERE user_id = ? AND is_read = 0),
@@ -99,9 +99,10 @@ func (d *UserDao) GetBadges(userId string) (int, int, error) {
 		   JOIN chatrooms r ON r.chatroom_id = c.chatroom_id
 		   JOIN products p ON p.product_id = r.product_id
 		   WHERE c.is_read = 0 AND c.sender_id <> ?
-		     AND (r.proposer_id = ? OR p.seller_id = ?))`,
-		userId, userId, userId, userId).Scan(&notifications, &chats)
-	return notifications, chats, err
+		     AND (r.proposer_id = ? OR p.seller_id = ?)),
+		  (SELECT COUNT(*) FROM products WHERE seller_id = ? AND status = 'unshipped')`,
+		userId, userId, userId, userId, userId).Scan(&notifications, &chats, &unshipped)
+	return notifications, chats, unshipped, err
 }
 
 // Block ユーザーをブロックする

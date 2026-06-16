@@ -15,12 +15,7 @@ import (
 	"github.com/livekit/protocol/auth"
 )
 
-// ─────────────────────────────────────────────────────────
-// LiveController
-//
-// ライブ配信機能のHTTPハンドラをまとめたコントローラ。
-// SSEハブ（liveHub）でリアルタイムな入札・タイマー情報を全視聴者にブロードキャストする。
-// ─────────────────────────────────────────────────────────
+// LiveController: ライブ配信のHTTPハンドラ（SSEハブでリアルタイムブロードキャスト）
 
 type LiveController struct {
 	dao *dao.LiveDao
